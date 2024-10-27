@@ -25,8 +25,14 @@ To run the analyses, clone this repository and ensure required dependencies are 
 
 ```bash
 git clone https://github.com/shekharlab/DoubleCones.git
-cd DoubleCones
+cd DoubleCones/src
 ```
+
+1. Run through the analysis in **AnalysisAndFigures.Rmd** until export to h5ad
+2. Run through the **SamapAnalysis.ipynb**
+3. Finish the rest of the **AnalysisAndFigures.Rmd**
+4. Generate segmentation masks in **RunCellpose.ipynb**
+5. Count the positive nuclei using **CountCellPuncta-RedOpsin.ipynb**
 
 ## Usage
 
