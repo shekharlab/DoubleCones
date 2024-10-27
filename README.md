@@ -5,7 +5,7 @@
 2. [Repository Structure](#repository-structure)
 3. [Getting Started](#getting-started)
 4. [Usage](#usage)
-5. [Contributing](#contributing)
+5. [Cite](#cite)
 
 ## Project Overview
 This repository contains analyses for **Transcriptomic insights into the evolutionary origin of tetrapod double cone**. 
@@ -18,7 +18,8 @@ The paper can be accessed here:
 - **src/AnalysisAndFigures.Rmd**: R Markdown notebook where most analysis, figures, and supplementary materials were generated.
 - **src/SamapAnalysis.ipynb**: Jupyter notebooks with step-by-step SAMap analysis
 - **src/RunCellpose.ipynb**: Cellpose nuclei segmentation for *in situ* hybridization analysis 
-- **src/CountCellPuncta-RedOpsin.ipynb**: Nuclei counting for *in situ* hybridization analysis 
+- **src/CountCellPuncta-RedOpsin.ipynb**: Nuclei counting for *in situ* hybridization analysis
+- **src/utils**: Utility functions used in the notebooks. 
 
 ## Getting Started
 To run the analyses, clone this repository and ensure required dependencies are installed. 
@@ -35,5 +36,10 @@ cd DoubleCones/src
 5. Count the positive nuclei using **CountCellPuncta-RedOpsin.ipynb**
 
 ## Usage
+Due to the size of the files, the data directory is empty by default. For data files needed to run analyses, please email [Dario Tommasini](mailto:dtommasini@berkeley.edu) or [Karthik Shekhar](mailto:kshekhar@berkeley.edu). 
 
-For raw data needed to run analyses, please email Dario Tommasini or Karthik Shekhar. 
+## Cite
+If you find our code, analysis, or results useful and use them in your publications, please cite us using the following citation: 
+
+Tommasini, Yoshimatsu, Baden, and Shekhar. Transcriptomic insights into the evolutionary origin of the tetrapod double cone. *In submission*. 2024. 
+
