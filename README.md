@@ -17,8 +17,8 @@ The paper can be accessed here:
 ## Repository Structure
 - **src/AnalysisAndFigures.Rmd**: R Markdown notebook where most analysis, figures, and supplementary materials were generated.
 - **src/SamapAnalysis.ipynb**: Jupyter notebooks with step-by-step SAMap analysis
-- **src/RunCellpose.ipynb**: Cellpose nuclei segmentation for \emph{in situ} hybridization analysis 
-- **src/CountCellPuncta-RedOpsin.ipynb**: Nuclei counting for \emph{in situ} hybridization analysis 
+- **src/RunCellpose.ipynb**: Cellpose nuclei segmentation for *in situ* hybridization analysis 
+- **src/CountCellPuncta-RedOpsin.ipynb**: Nuclei counting for *in situ* hybridization analysis 
 
 ## Getting Started
 To run the analyses, clone this repository and ensure required dependencies are installed. 
