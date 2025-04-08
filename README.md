@@ -15,8 +15,10 @@ The paper can be accessed here:
 [insert biorxiv link]
 
 ## Repository Structure
-- **src/AnalysisAndFigures.Rmd**: R Markdown notebook where most analysis, figures, and supplementary materials were generated.
-- **src/SamapAnalysis.ipynb**: Jupyter notebooks with step-by-step SAMap analysis
+- **src/AnalysisAndFigures_Part1.Rmd**: R Markdown notebook where most analysis, figures, and supplementary materials were generated.
+- **src/AnalysisAndFigures_Part2.Rmd**: R Markdown notebook where most analysis, figures, and supplementary materials were generated.
+- **src/SamapAnalysis_v3_5species.ipynb**: Jupyter notebook with step-by-step SAMap integration of 5 species
+- **src/SamapAnalysis_v3_swap.ipynb**: Jupyter notebook with step-by-step SAMap integration of chicken, lizard, and zebrafish
 - **src/RunCellpose.ipynb**: Cellpose nuclei segmentation for *in situ* hybridization analysis 
 - **src/CountCellPuncta-RedOpsin.ipynb**: Nuclei counting for *in situ* hybridization analysis
 - **src/utils**: Utility functions used in the notebooks. 
