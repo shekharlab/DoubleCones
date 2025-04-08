@@ -2100,56 +2100,6 @@ xlsx::write.xlsx(li_de_ab, file="Tables/TableS2-differential_gene_expression_ana
                  sheetName="Lizard accessory vs blue", row.names=FALSE, append = TRUE)
 ```
 
-# Investigation of zebrafish red and green
-
-Why are they so similar in adult? 
-Actually not true, just as similar as in developing
-
-```{r, fig.height=5, fig.width=5}
-red.green.genes = c('opn1lw1', 'opn1lw2', 'opn1mw1', 'opn1mw2', 'opn1mw3', 'opn1mw4', 'nfia', 'thrb', 'sox5')
-ze_corbo = TopNDEGs(subset(fullList$ZebrafishCorbo, annotated %in% c('red', 'green')), group.by = 'annotated', n = 10, avg_log2FC_cutoff = 0.25)
-ze_dev = TopNDEGs(subset(fullList$ZebrafishDev, annotated %in% c('red', 'green')), group.by = 'annotated', n = 10, avg_log2FC_cutoff = 0.25)
-ze_lyu = TopNDEGs(subset(fullList$ZebrafishAdult, annotated %in% c('red', 'green')), group.by = 'annotated', n = 10, avg_log2FC_cutoff = 0.25)
-
-ExpressionScatter(fullList$ZebrafishCorbo, 'red', 'green', genes.to.label = ze_corbo$gene)
-ExpressionScatter(fullList$ZebrafishDev, 'red', 'green', group.by = 'annotated', genes.to.label = ze_dev$gene)
-ExpressionScatter(fullList$ZebrafishAdult, 'red', 'green', group.by = 'annotated', genes.to.label = ze_lyu$gene)
-```
-
-
-```{r, fig.height=3, fig.width=10}
-genes = c('CT573282.1', 'ENSDARG00000102967','opn1lw1', 'opn1lw2', 'CU639468.1', 'CU639468.1-si:dkeyp-51b7.3', 'fibcd1', 'opn1sw2', 'opn1sw1')
-TitlePlot(DotPlot2(fullList$ZebrafishCorbo, features = genes, group.by = 'annotated2') + NoLegend(), 'Corbo') | 
-  TitlePlot(DotPlot2(fullList$ZebrafishDev, features = genes, group.by = 'annotated') + NoLegend(), 'Lyu dev') |
-  TitlePlot(DotPlot2(fullList$ZebrafishAdult, features = genes, group.by = 'annotated2'), 'Lyu adult')
-
-write.table(paste0("CB:Z:", gsub('Control_2_', '', WhichCells(fullList$ZebrafishAdult, expr = annotated == 'red'))), 'tf_reanalysis/lyu_adult_red_barcodes_v2.txt', row.names = FALSE, col.names = FALSE, quote = FALSE)
-write.table(paste0("CB:Z:", gsub('Control_2_', '', WhichCells(fullList$ZebrafishAdult, expr = annotated == 'green'))), 'tf_reanalysis/lyu_adult_green_barcodes_v2.txt', row.names = FALSE, col.names = FALSE, quote = FALSE)
-write.table(paste0("CB:Z:", gsub('Control_2_', '', WhichCells(fullList$ZebrafishAdult, expr = annotated == 'blue'))), 'tf_reanalysis/lyu_adult_blue_barcodes_v2.txt', row.names = FALSE, col.names = FALSE, quote = FALSE)
-write.table(paste0("CB:Z:", gsub('Control_2_', '', WhichCells(fullList$ZebrafishAdult, expr = annotated == 'UV'))), 'tf_reanalysis/lyu_adult_UV_barcodes_v2.txt', row.names = FALSE, col.names = FALSE, quote = FALSE)
-```
-
-## Check the Lyu data that I re-aligned myself
-
-```{r, fig.height=3, fig.width=15}
-ze_lyu = readRDS('../../Species_Objects/Zebrafish_Lyu_control_initial.rds')
-DimPlotLabeled(ze_lyu, 'cell_class')
-
-ze_key = readRDS('orthology_graphs/zfish.key.rds')
-rownames(ze_lyu)[which(ze_key$orig == 'CT573282.1')] # confirmed as ENSDARG00000102967
-
-FeaturePlot(ze_lyu, c('ENSDARG00000102967', 'opn1lw1'))
-
-ze_lyu = MapBack(ze_lyu, fullList$ZebrafishAdult, group.by = 'annotated2')
-ze_lyu_pr = ze_lyu[,!is.na(ze_lyu$mapped.back)]
-table(ze_lyu_pr$mapped.back)
-
-TitlePlot(DotPlot2(fullList$ZebrafishCorbo, features = genes, group.by = 'annotated2') + NoLegend(), 'Corbo') | 
-  TitlePlot(DotPlot2(fullList$ZebrafishDev, features = genes, group.by = 'annotated') + NoLegend(), 'Lyu dev') |
-  TitlePlot(DotPlot2(fullList$ZebrafishAdult, features = genes, group.by = 'annotated2') + NoLegend(), 'Lyu adult') |
-  TitlePlot(DotPlot2(ze_lyu_pr, features = genes, group.by = 'mapped.back'), 'Lyu adult (re-aligned)')
-```
-
 # Graphical abstract
 
 ```{r, fig.height=3, fig.width=4.3}

@@ -3361,7 +3361,6 @@ dat = SAMapHeatmap(objectList,
 write.csv(dat, 'figures/all_pr_top10.csv')
 ```
 
-
 ## Statistics
 
 ```{r}
@@ -3861,7 +3860,8 @@ p5 = plot_grid(ExpressionScatter(chicken, 'blue', 'principal', genes.to.label = 
                ExpressionScatter(chicken, 'blue', 'accessory', genes.to.label = top_ab$gene, group.by = 'annotated', label.size = 2))
 
 p2
-p5# de_pr = FindMarkersFast(chicken, group.by = 'annotated', ident.1 = 'principal', ident.2 = 'red', p_val_adj_cutoff = 0.01, avg_log2FC_cutoff = 0.25)
+p5
+# de_pr = FindMarkersFast(chicken, group.by = 'annotated', ident.1 = 'principal', ident.2 = 'red', p_val_adj_cutoff = 0.01, avg_log2FC_cutoff = 0.25)
 # de_ar = FindMarkersFast(chicken, group.by = 'annotated', ident.1 = 'accessory', ident.2 = 'red', p_val_adj_cutoff = 0.01, avg_log2FC_cutoff = 0.25)
 # de_dr = merge(subset(de_pr, avg_log2FC > 0), subset(de_ar, avg_log2FC > 0), by = 'gene')
 # de_rd = merge(subset(de_pr, avg_log2FC < 0), subset(de_ar, avg_log2FC < 0), by = 'gene')
@@ -4056,119 +4056,5 @@ de_dr = FindMarkersFast(chicken_subset, group.by = 'annotated2', ident.1 = 'doub
 plot_grid(ExpressionScatter(chicken_subset, 'red', 'principal', genes.to.label = mg_genes[mg_genes %in% de_dr$gene], group.by = 'annotated'), 
           ExpressionScatter(chicken_subset, 'red', 'accessory', genes.to.label = mg_genes[mg_genes %in% de_dr$gene], group.by = 'annotated'))
 write.xlsx(de_dr, 'de_tests/DE_double_red_all.xlsx')
-```
-
-## Homophilic adhesion in chicken cones
-
-```{r, fig.height=100, fig.width=10}
-chicken = objectList$ChickenV3
-gene2go = fread('../../reference_files/human_gene2go_symbol.csv')
-cell_adhesion_terms = gene2go[grepl("cell adhesion", gene2go$GoTerm)]$GoTerm %>% unique %>% sort
-cell_adhesion_terms
-cell_adhesion_genes = gene2go[grepl("cell adhesion", gene2go$GoTerm)]$Symbol %>% unique %>% sort
-cell_adhesion_genes
-
-chicken = ScaleData(chicken, features = rownames(chicken))
-
-# SeuratHeatmap(chicken, 
-#               cell_adhesion_genes, 
-#               group.by = 'annotated', 
-#               # annotate.by = 'annotated', 
-#               cluster_rows = FALSE, 
-#               cluster_columns = FALSE,
-#               show_row_names = FALSE, 
-#               show_column_names = FALSE, 
-#               use_raster = FALSE)
-
-# Lizard genes
-li2ch = readRDS("orthology_graphs/li2ch.rds")
-cell_adhesion_genes_converted = ConvertGeneSymbolsFromMatrix(Matrix::t(li2ch), cell_adhesion_genes) %>% 
-  as.data.frame() %>% 
-  rownames_to_column() %>% 
-  setNames(c('Chicken', 'Lizard')) %>% 
-  mutate(row_annotation = 'red')
-
-# Filter out lowly expressed genes
-objectList$Chicken$annotated = factor(objectList$Chicken$annotated)
-chicken.high.features = SelectFeatures(objectList$Chicken, group.by = 'annotated', nfeatures = 100000, min.pct.expressed = 5)
-objectList$Lizard$annotated = factor(objectList$Lizard$annotated)
-lizard.high.features = SelectFeatures(objectList$Lizard, group.by = 'annotated', nfeatures = 100000, min.pct.expressed = 5)
-cell_adhesion_genes_converted_filt = subset(cell_adhesion_genes_converted, Chicken %in% chicken.high.features & Lizard %in% lizard.high.features)
-
-pdf('figures/cell-adhesion-molecules-filt.pdf', height = 40, width = 7)
-SAMapHeatmap(objectList, 
-             cell_adhesion_genes_converted_filt, 
-             show_column_names = FALSE,
-             species.use = c("Chicken", "Lizard"), 
-             types.use = c("accessory", "principal", "red", "green", "blue", "UV", "rod"), 
-             show_heatmap_legend = FALSE, 
-             cluster_rows = TRUE,
-             cluster_columns = FALSE,
-             remove.nas = TRUE,
-             width = unit(4, "in"))
-dev.off()
-```
-
-## Gap junctions
-
-```{r, fig.height=3, fig.width=7}
-connexins = sort(rownames(objectList$Chicken)[grepl('^GJA|^GJB|^GJC|^GJD|^GJE', rownames(objectList$Chicken))])
-connexin_genes_converted = ConvertGeneSymbolsFromMatrix(Matrix::t(li2ch), connexins) %>% 
-  as.data.frame() %>% 
-  rownames_to_column() %>% 
-  setNames(c('Chicken', 'Lizard')) %>% 
-  mutate(row_annotation = 'red') 
-  # filter(Chicken %in% chicken.high.features & Lizard %in% lizard.high.features)
-
-SAMapHeatmap(objectList, 
-             connexin_genes_converted,
-             show_column_names = FALSE,
-             species.use = c("Chicken", "Lizard"), 
-             types.use = c("accessory", "principal", "red", "green", "blue", "UV", "rod"), 
-             show_heatmap_legend = FALSE, 
-             cluster_rows = TRUE,
-             cluster_columns = FALSE,
-             remove.nas = TRUE,
-             width = unit(4, "in"))
-```
-
-
-```{r}
-DotPlot2(objectList$Chicken, features = c('GJC1', 'GJD2', 'GJC2', 'GJA10', 'GJA5'), group.by = 'annotated')
-DotPlot2(objectList$Lizard, features = c('GJC1', 'GJD2', 'GJC2', 'GJA10', 'GJA5'), group.by = 'annotated')
-```
-
-## Dopamine receptors for Tom
-
-```{r, fig.height=4, fig.width=10}
-# chicken = readRDS("../../Species_Objects/Cone_Objects/Chicken_clean_v3.rds")
-ggarrange(
-  TitlePlot(DotPlot2(chicken, features = paste0('DRD', 1:5), group.by = 'annotated'), 'Chicken'), 
-  TitlePlot(DotPlot2(lizard, features = paste0('DRD', 1:5), group.by = 'annotated'), 'Lizard'), 
-  ncol = 2, common.legend = TRUE, legend = 'right')
-
-zebrafish_drd = rownames(objectList$ZebrafishAdult)[startsWith(rownames(objectList$ZebrafishAdult), 'drd')]
-TitlePlot(DotPlot2(objectList$Zebrafish, features = zebrafish_drd, group.by = 'annotated'), 'Zebrafish')
-DotPlot2(fullList$ZebrafishAdult, features = zebrafish_drd, group.by = 'seurat_clusters')
-DimPlotLabeled(fullList$ZebrafishAdult, 'seurat_clusters') | DimPlotLabeled(fullList$ZebrafishAdult, 'annotated')
-```
-
-```{r}
-neuromodulator.genes <- c("TAC1", "TACR1", "TPH1", "TPH2", "SLC6A4", "HTR1A", "HTR1B", 
-           "HTR1D", "HTR1E", "HTR1F", "HTR2A", "HTR2B", "HTR2C", "HTR3A", 
-           "HTR3B", "HTR3C", "HTR3D", "HTR3E", "HTR4", "HTR5A", "HTR5B", 
-           "HTR6", "HTR7", "CNR1", "CNR2", "NAPEPLD", "MGLL")
-
-ze2hs = BlastOrthologyTable(file1 = "../../../BLAST_HOMOLOGY/maps_pmNCBI_zeENS_chNCBI_liNCBI_opNCBI_sqENS_hsENS/zehs/hs_to_ze.txt",
-                            file2 = "../../../BLAST_HOMOLOGY/maps_pmNCBI_zeENS_chNCBI_liNCBI_opNCBI_sqENS_hsENS/zehs/ze_to_hs.txt",
-                            keyfile1 = "../../../BLAST_HOMOLOGY/Keys/Human_key.csv",
-                            keyfile2 = "../../../BLAST_HOMOLOGY/Keys/Zebrafish_lyu_key.csv", 
-                            one2one = TRUE)
-
-neuromodulator.genes.ze = as.vector(ConvertGeneSymbolsFromMatrix(t(ze2hs), neuromodulator.genes))
-
-TitlePlot(DotPlot2(fullList$ZebrafishCorbo, features = neuromodulator.genes.ze, group.by = 'annotated2') + NoLegend(), 'Corbo') | 
-  TitlePlot(DotPlot2(fullList$ZebrafishDev, features = neuromodulator.genes.ze, group.by = 'annotated') + NoLegend(), 'Lyu 4/5 dpf') |
-  TitlePlot(DotPlot2(fullList$ZebrafishAdult, features = neuromodulator.genes.ze, group.by = 'annotated2'), 'Lyu adult')
 ```
 
