@@ -1,0 +1,4174 @@
+---
+title: "Double Cones Analysis"
+output: html_document
+date: "2023-09-24"
+params: 
+  prep_ortho: FALSE
+  downsample: 100
+  cores: 10
+  save: TRUE
+  stopCheckPoint1: TRUE
+---
+
+```{r setup, message=FALSE}
+# knitr::opts_chunk$set(fig.height = 5, fig.width = 7)
+source("../../utils/dario_functions.R")
+LoadLibraries(load.lisi = F)
+SourceFiles()
+
+base_name = "ConeOrthoObject_common"
+output_file_v1 = paste0("../../Ortho_Objects/", base_name, "_v1.rds")
+ouput_file_seurat = paste0("../../Ortho_Objects/", base_name, "_seurat.rds")
+
+metadata = data.frame(
+  speciesList = c("Zebrafish", "Goldfish", "Chicken", "Lizard", "Opossum", "Squirrel", "Human"),
+  files = c(Zebrafish = "GSM5351368_v432_dradult_Final.rds",
+            Goldfish = "Goldfish_PR_v1.rds", 
+            Chicken = "Chicken_PR_v1.rds",
+            Lizard = "LizardPR_ncbi.rds", 
+            Opossum = "Opossum_PR_v2.rds", 
+            Squirrel = "../../Species_Objects/Cone_Objects/Squirrel_clean_v1.rds", #Rat = "Rat_PR_v2.rds",
+            Human = "Human_PR.rds")
+)
+
+# color_palette = list(accessory = "orange", principle = "brown", red = "orangered", green = "chartreuse", blue = "lue", UV = "violet", rod = "grey", full = "white", `opn1mw4/opn1lw1` = "red3")
+
+pr_palette = list(pr_annotation@color %>% setNames((pr_annotation@annotation)))[[1]]
+pr_palette = (pr_palette[unique(names(pr_palette))])
+# pr_palette2 = list(unique(pr_annotation@color) %>% setNames(gsub("principal", "principle", unique(pr_annotation@annotation))))[[1]]
+
+#"LaCroixColoR::Coconut"
+# paletteer::paletteer_d("PNWColors::Spring")
+# lisa::OskarSchlemmer
+species_palette = as.character(paletteer::paletteer_d("lisa::OskarSchlemmer", 5)) %>% 
+  setNames(c("Zebrafish", "Chicken", "Lizard", "Squirrel", "Human"))
+species_palette2 = species_palette %>% setNames(c("ze", "ch", "li", "sq", "hs"))
+
+speciesList = c("Zebrafish", "Chicken", "Lizard", "Opossum", "Squirrel", "Human")
+
+# Images
+image.files = paste0("../../figures/animals/black/", speciesList, ".png")
+names(image.files) = speciesList
+
+image.files2 = image.files
+names(image.files2) = c('ze', 'ch', 'li', 'op', 'sq', 'hs')
+
+# rotated_images <- lapply(image.files, rotate_image, angle = -90)
+# lapply(rotated_images, function(x) )
+```
+
+Set seed for reproducibility
+
+```{r}
+set.seed(12345)
+```
+
+# Read in data
+
+```{r}
+objectList = mclapply(metadata$files, function(file){
+  object = readRDS(paste0("../../Species_Objects/Cone_Objects/", file))
+  DefaultAssay(object) = "RNA"
+  return(object)
+  }, mc.cores = 6)
+
+names(objectList) = metadata$speciesList
+```
+
+# Zebrafish from Ogawa and Corbo
+
+## Read in Ogawa and Corbo zebrafish cone atlas
+
+Add annotations from paper: 
+
+* 0 = "green"
+* 4 = "opn1mw4/opn1lw1"
+* 1 = "red"
+* 3 = "blue"
+* 5 = "ON_bipolar"
+* 6 = "OFF_bipolar"
+* 7 = "UV"
+* 2 = "rod"
+
+```{r}
+objectList$Zebrafish$annotated = NA
+objectList$Zebrafish$annotated[objectList$Zebrafish$seurat_clusters == 0] = "green"
+objectList$Zebrafish$annotated[objectList$Zebrafish$seurat_clusters == 4] = "opn1mw4/opn1lw1"
+objectList$Zebrafish$annotated[objectList$Zebrafish$seurat_clusters == 1] = "red"
+objectList$Zebrafish$annotated[objectList$Zebrafish$seurat_clusters == 3] = "blue"
+objectList$Zebrafish$annotated[objectList$Zebrafish$seurat_clusters == 5] = "ON_bipolar"
+objectList$Zebrafish$annotated[objectList$Zebrafish$seurat_clusters == 6] = "OFF_bipolar"
+objectList$Zebrafish$annotated[objectList$Zebrafish$seurat_clusters == 7] = "UV"
+objectList$Zebrafish$annotated[objectList$Zebrafish$seurat_clusters == 2] = "rod"
+```
+
+```{r, eval = FALSE}
+# Save object with bipolars for SAMap control
+SeuratToH5ad(objectList$Zebrafish, "../../Species_Objects/Cone_Objects/Zebrafish_bc.h5ad", genes.remove = NULL, types.remove = c("opn1mw4/opn1lw1"), downsample = 100)
+SeuratToH5ad(objectList$Zebrafish, "../../Species_Objects/Cone_Objects/Zebrafish_no_green.h5ad", genes.remove = NULL, types.remove = c("opn1mw4/opn1lw1", "green", "OFF_bipolar", "ON_bipolar"), downsample = 100)
+```
+
+Remove bipolar cells
+
+```{r}
+objectList$Zebrafish = subset(objectList$Zebrafish, annotated %in% c("OFF_bipolar", "ON_bipolar"), invert = TRUE)
+```
+
+```{r, fig.height=5, fig.width=15}
+AnnotatedUmap(objectList$Zebrafish, pr_annotation, color.clusters.by = "annotated", color.genes = TRUE, group.by = "annotated", rel_widths = c(1,1.5))
+```
+
+Format each object the same
+
+```{r, eval = TRUE}
+objectList$Goldfish$type = objectList$Goldfish$seurat_clusters
+objectList$Lizard$type = objectList$Lizard$seurat_clusters
+objectList$Human$type = objectList$Human$seurat_clusters
+objectList = lapply(objectList, function(object){
+  object$annotated = if(!"annotated" %in% colnames(object@meta.data)) object$type else object$annotated
+  Idents(object) = "annotated"
+  return(object)
+  })
+```
+
+# Goldfish from Kon et al. 2022
+
+```{r}
+goldfish.conversion = data.frame(old.names = c("L_cone", "M_cone", "Rod"), 
+                                 new.names = c("red", "green", "rod"))
+
+objectList$Goldfish$annotated = goldfish.conversion$new.names[match(objectList$Goldfish$lit_type, goldfish.conversion$old.names)]
+```
+
+```{r, fig.height=5, fig.width=15}
+AnnotatedUmap(objectList$Goldfish, pr_annotation, color.clusters.by = "annotated", group.by = "annotated", rel_widths = c(1,1.5), color.genes = TRUE)
+```
+
+Trying to salvage blue cones fails
+
+```{r, fig.height=10, fig.width=10, eval = FALSE}
+goldfish.split = SplitObject(objectList$Goldfish, split.by = "animal")
+goldfish.split = lapply(goldfish.split, ClusterSeurat)
+
+# Blue cones do not subcluster in any of the biological replicates; its not a batch integration error
+plot_grid(plotlist = lapply(goldfish.split, function(object) FeaturePlot(object, features = "opn1sw2")), labels = names(goldfish.split))
+plot_grid(plotlist = lapply(goldfish.split, function(object) FeaturePlot(object, features = "opn1lw1")), labels = names(goldfish.split))
+plot_grid(plotlist = lapply(goldfish.split, function(object) FeaturePlot(object, features = "opn1mw4")), labels = names(goldfish.split))
+```
+
+```{r, fig.height=4, fig.width=12, eval = FALSE}
+best = subset(goldfish.split$`Wakin-2`, annotated %in% c("red", "green"))
+best = ClusterSeurat(best)
+FeaturePlot(best, features = c("opn1sw2", "opn1lw1", "opn1mw4"), ncol = 3)
+```
+
+Does opn1sw2 have mutually exclusive expression with other cone opsins? 
+
+```{r, eval = FALSE}
+FeatureScatter(subset(objectList$Goldfish, annotated %in% c("red", "green")), feature1 = "opn1sw2", feature2 = "opn1mw4")
+FeatureScatter(subset(objectList$Goldfish, annotated %in% c("red", "green")), feature1 = "opn1sw2", feature2 = "opn1lw1")
+FeatureScatter(subset(objectList$Goldfish, annotated %in% c("red", "green")), feature1 = "opn1mw4", feature2 = "opn1lw1")
+# FeatureScatter(objectList$Goldfish, feature1 = "opn1mw4", feature2 = "arid2")
+
+FeaturePlot(objectList$Goldfish, features = "arid2")
+```
+
+```{r, fig.height=5, fig.width=5, eval = FALSE}
+Idents(objectList$Goldfish) = "annotated"
+
+ExpressionScatter(objectList$Goldfish, x = "red", y="green", logX = FALSE, logY = FALSE, genes.to.label = c("opn1sw2", "opn1mw4", "opn1lw1", "rho"))
+ExpressionScatter(objectList$Goldfish, x = "red", y="rod", logX = FALSE, logY = FALSE, genes.to.label = c("opn1sw2", "opn1mw4", "opn1lw1", "rho"))
+ExpressionScatter(objectList$Goldfish, x = "rod", y="green", logX = FALSE, logY = FALSE, genes.to.label = c("opn1sw2", "opn1mw4", "opn1lw1", "rho"))
+```
+
+# Chicken from Yamagata et al. 2020
+
+With the corrected UV opsin (named OPN1SWA)
+
+```{r}
+# Matrix from Wenjun
+chick.counts = readRDS("../../Species_Objects/Chicken_S1_with_OPN1SW_10X_20191004.rds")
+
+# Remove OPN1SW
+chick.counts = chick.counts[rownames(chick.counts) != "OPN1SW",]
+
+# Rename OPN1SWA to OPN1SW
+rownames(chick.counts)[rownames(chick.counts) == "OPN1SWA"] = "OPN1SW"
+
+# Processing
+chick.new = CreateSeuratObject(counts = chick.counts)
+chick.meta = fread("../../Species_Objects/Chick_retina_atlas_meta.csv")
+chick.new@meta.data = cbind(chick.new@meta.data, chick.meta[match(Cells(chick.new), chick.meta$NAME),])
+saveRDS(chick.new, "../../Species_Objects/Chicken_initial_opn1sw.rds")
+chick.pr = subset(chick.new, Cluster %in% c("BlueCones", "GreenCones", "VioletCones", "RedCones", "Rods", "DBCones1", "DBCones2", "DBCones3"))
+chick.pr = ClusterSeurat(chick.pr, integrate.by = "orig.ident")
+DimPlot(chick.pr, group.by = "Cluster", label = T) + NoLegend() | FeaturePlot(chick.pr, features = "OPN1SW")
+```
+
+```{r, fig.height=5, fig.width=15}
+chicken.conversion = data.frame(old.names = c("RedCones", "GreenCones", "BlueCones", "VioletCones", "Rods", "DBCones1", "DBCones2", "DBCones3"), 
+                                new.names = c("red", "green", "blue", "UV", "rod", "accessory", "principle", "full"))
+chick.pr$annotated = chicken.conversion$new.names[match(chick.pr$Cluster, chicken.conversion$old.names)]
+chick.pr$seurat_clusters = chick.pr$annotated
+AnnotatedUmap(chick.pr, pr_annotation, color.clusters.by = "annotated", group.by = "seurat_clusters", rel_widths = c(1,1.5), color.genes = TRUE)
+chick.pr$species = "Chicken"
+saveRDS(chick.pr, "../../Species_Objects/Cone_Objects/Chicken_clean_v2.rds")
+```
+
+Add OPN1SWA to original chicken data (NCBI genome instead of NCBI cre genome)
+
+```{r}
+# Remove developing types
+objectList$Chicken = subset(objectList$Chicken, annotated %in% c("DevDB13Cones", "DevDB2Cones", "DevNonDBCones", "DevRods"), invert = TRUE)
+
+# Convert barcodes
+chick.pr = readRDS("../../Species_Objects/Cone_Objects/Chicken_clean_v2.rds")
+table(objectList$Chicken$orig.file, objectList$Chicken$orig.ident)
+converted.barcodes = gsub('-1', 'x', 
+                      gsub('Chicken1A_', 'possorted_genome_bam_7ECLI:', 
+                      gsub('Chicken1B_', 'possorted_genome_bam_CH9WW:',
+                      gsub('Chicken1C_', 'possorted_genome_bam_EAT51:',
+                      gsub('Chicken1D_', 'possorted_genome_bam_38SN7:', Cells(chick.pr))))))
+chick.pr = RenameCells(chick.pr, new.names = converted.barcodes)
+
+objectList$Chicken@assays$RNA@counts["OPN1SW",] = chick.pr@assays$RNA@counts["OPN1SW", match(Cells(objectList$Chicken), Cells(chick.pr))]
+# objectList$Chicken = MapBack(objectList$Chicken, chick.pr, group.by = "NAME", convert.barcodes = TRUE)
+# objectList$Chicken$id = str_split_fixed(objectList$Chicken$mapped.back, '_', 2)[,1]
+```
+
+## Re-compute umap for chicken
+
+```{r}
+objectList$Chicken = suppressMessages(ClusterSeurat(objectList$Chicken, cluster_resolution = 2))
+DimPlot(objectList$Chicken, group.by = "seurat_clusters", label = TRUE)
+
+# Remove that pesky cluster of doublets
+table(objectList$Chicken$seurat_clusters, factor(objectList$Chicken$annotated))
+objectList$Chicken = subset(objectList$Chicken, seurat_clusters == 15, invert = TRUE)
+DimPlot(objectList$Chicken, group.by = "seurat_clusters", label = TRUE)
+
+# Doublet removal
+# objectList$Chicken = FindDoublets(objectList$Chicken, channels = 'orig.file')
+# DoubletAnalysis(objectList$Chicken)
+# objectList$Chicken = subset(objectList$Chicken, DF.classifications == 'Singlet')
+objectList$Chicken = suppressMessages(ClusterSeurat(objectList$Chicken, cluster_resolution = 0.6))
+DimPlot(objectList$Chicken, group.by = "seurat_clusters")
+table(objectList$Chicken$seurat_clusters, factor(objectList$Chicken$annotated))
+```
+
+## Rename clusters
+
+```{r}
+chicken.conversion = data.frame(old.names = c(5, 4, 7, 8, 2, 1, 6, 0, 3), 
+                                new.names = c("red", "green", "blue", "UV", "rod", "accessory", "accessory", "principle", "full"))
+
+objectList$Chicken$annotated = chicken.conversion$new.names[match(objectList$Chicken$seurat_clusters, chicken.conversion$old.names)]
+# objectList$Chicken$seurat_clusters = objectList$Chicken$annotated
+objectList$Chicken$animal = objectList$Chicken$orig.file
+objectList$Chicken$species = "Chicken"
+saveRDS(objectList$Chicken, "../../Species_Objects/Cone_Objects/Chicken_clean_v3.rds")
+```
+
+```{r, fig.height=5, fig.width=15}
+AnnotatedUmap(objectList$Chicken, pr_annotation, color.clusters.by = "annotated", group.by = "annotated", rel_widths = c(1,1.5), color.genes = TRUE)
+```
+
+Cell type proportions of developing chicken
+
+```{r, eval = FALSE}
+table(objectList$Chicken$annotated)/sum(table(objectList$Chicken$annotated))
+# ProportionBarplot(objectList$Chicken@meta.data, "annotated", "species")
+```
+
+## Attempt to recluster chicken (no need)
+
+```{r, fig.height=5, fig.width=15, eval = FALSE}
+FeaturePlot(objectList$Chicken, features = c("OPN1SW", "NRXN3", "nFeature_RNA"))
+```
+
+```{r, fig.height=5, fig.width=10, eval = FALSE}
+objectList$Chicken = ClusterSeurat(objectList$Chicken, integrate.by = "orig.file")
+plotBatches2(objectList$Chicken, batch = "orig.file")
+AnnotatedUmap(objectList$Chicken, pr_annotation, color.clusters.by = "annotated", group.by = "annotated", rel_widths = c(1,1.5), color.genes = TRUE)
+
+DimPlot(objectList$Chicken, label = TRUE) + NoLegend()
+JSHeatmap(JSMatrix(table(objectList$Chicken$annotated, objectList$Chicken$seurat_clusters)))
+```
+
+# Lizard
+
+```{r, fig.height=7, fig.width=10}
+# Compute UMAP for lizard
+objectList$Lizard = ReprocessIntegrated(objectList$Lizard, cluster_resolution = 0.2)
+plot_grid(plotlist = FeaturePlot(objectList$Lizard, 
+                      features = c("OPN1SW", # Violet
+                                   "LOC132767847", # Blue
+                                   "LOC132773706", # Green
+                                   "LOC132767849", # Red
+                                   "RHO" # Rod
+                                   ), combine = F), 
+          labels = c("UV", "Blue", "Green", "Red", "Rod"), hjust = 0)
+```
+
+```{r}
+lizard.conversion = data.frame(old.names = c(0,1,3,2,4,5,6,7), 
+                               new.names = c("red", "principle", "red", "accessory", "blue", "UV", "green", "rod"))
+
+objectList$Lizard$annotated = lizard.conversion$new.names[match(objectList$Lizard$seurat_clusters, lizard.conversion$old.names)]
+```
+
+```{r, fig.height=5, fig.width=15}
+AnnotatedUmap(objectList$Lizard, pr_annotation, color.clusters.by = "annotated", group.by = "annotated", rel_widths = c(1,1.5), color.genes = TRUE)
+```
+
+# Opossum
+
+Reproducing results from Josh/Ayush
+
+```{r, eval = FALSE}
+Opossum = readRDS("../../Species_Objects/Opossum_initial.rds")
+Idents(Opossum) <- "cell_class"
+Opossum_PR <- subset(Opossum, cells = WhichCells(Opossum, idents = c("Rod", "Cone")))
+
+# Remove cells with low and high counts or features
+VlnPlot(Opossum_PR, "nCount_RNA", group.by = "orig.file", pt.size = .1)
+VlnPlot(Opossum_PR, "nFeature_RNA", group.by = "orig.file", pt.size = .1)
+
+Opossum_PR <- ClusterSeurat(Opossum_PR, numPCs = 30, integrate.by = "orig.file")
+# saveRDS(Opossum_PR, file = "../Species_Objects/Opossum_PR_int_v1.rds")
+
+DimPlot(Opossum_PR, label = TRUE)
+DimPlot(Opossum_PR, group.by = "orig.file", cells = sample(colnames(Opossum_PR)))
+VlnPlot(Opossum_PR, "nCount_RNA", pt.size = 0) + RotatedAxis()
+VlnPlot(Opossum_PR, "nFeature_RNA", pt.size = 0) + RotatedAxis()
+
+DotPlot(Opossum_PR, features = HC_markers, assay = "RNA") + RotatedAxis()
+DotPlot(Opossum_PR, features = c(RGC_markers, BC_markers, AC_markers, HC_markers, Cone_markers, Rod_markers, MG_markers, "OPN1SW", "OPN1LW", "OPN", "OPN5"), assay = "RNA") + RotatedAxis()
+
+#27 Cone SW
+#keep 3 and 10 seperate, Cone LW
+#rest all rod
+Opossum_PR <- MergeClusters(Opossum_PR, idents = c(0,1,2,4,5,6,7,8,9,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,28,29,30,31), refactor = FALSE)
+DimPlot(Opossum_PR, label = TRUE)
+Opossum_PR@meta.data$type = "ML_cone"
+Idents(Opossum_PR) <- "seurat_clusters"
+Opossum_PR@meta.data[WhichCells(Opossum_PR, idents = 27), "type"] <- "S_cone"
+Opossum_PR@meta.data[WhichCells(Opossum_PR, idents = 0), "type"] <- "Rod"
+DimPlot(Opossum_PR, group.by = "type", label = TRUE)
+DotPlot(Opossum_PR, group.by = "type", features = c(RGC_markers, BC_markers, AC_markers, HC_markers, Cone_markers, Rod_markers, MG_markers, "OPN1SW", "OPN1LW", "OPN"), assay = "RNA") + RotatedAxis()
+# saveRDS(Opossum_PR, file = "../Species_Objects/Opossum_PR_v2.rds")
+Idents(Opossum_PR) <- "type"
+```
+
+```{r}
+opossum.conversion = data.frame(old.names = c("Rod", "ML_cone", "S_cone"), 
+                               new.names = c("rod", "red", "UV"))
+
+objectList$Opossum$annotated = opossum.conversion$new.names[match(objectList$Opossum$type, opossum.conversion$old.names)]
+objectList$Opossum$annotated[objectList$Opossum$seurat_clusters == '10'] = "accessory"
+```
+
+Subcluster opossum red into red and principle (principle should be zeb-)
+
+```{r, eval = TRUE}
+objectList$Opossum = UpdateEnrichment(objectList$Opossum, "Opossum")
+opossumSubset = subset(objectList$Opossum, annotated == "red") # & animal %in% c("S1", "S3", "S4"))
+opossumSubset = Harmonize(opossumSubset, batch = "animal", cluster_resolution = 0.1)
+plotBatches2(opossumSubset, batch = "animal")
+```
+
+```{r opossum-red-principle, eval = TRUE}
+FeaturePlot(opossumSubset, features = "ZEB2")
+```
+
+```{r, eval = TRUE, fig.height=5,fig.width=15}
+opossumSubset$annotated[opossumSubset$seurat_clusters == 1] = "principle"
+table(opossumSubset$annotated)
+
+# Add principle member annotation to full object
+objectList$Opossum = MapBack(objectList$Opossum, opossumSubset, group.by = "annotated")
+objectList$Opossum$annotated[!is.na(objectList$Opossum$mapped.back)] = objectList$Opossum$mapped.back[!is.na(objectList$Opossum$mapped.back)]
+# objectList$Opossum = ReprocessIntegrated(objectList$Opossum)
+# DimPlot(objectList$Opossum, group.by = "annotated")
+AnnotatedUmap(objectList$Opossum, pr_annotation, color.clusters.by = "annotated", group.by = "annotated", rel_widths = c(1,1.5), color.genes = TRUE)
+```
+
+# Our zebrafish
+
+Can find rods easily enough, but too few cones
+
+```{r, eval = FALSE}
+# object = readRDS("../../Species_Objects/Cone_Objects/Zebrafish_PR_int_v2.rds")
+full = readRDS("../../Species_Objects/Zebrafish_initial.rds")
+full = UpdateEnrichment(full, "Zebrafish")
+DimPlot(full)
+DotPlot2(full, features = unique(toupper(Genes(major_annotation))))
+DotPlot2(full, features = unique(toupper(Genes(pr_annotation))))
+```
+
+```{r, eval = FALSE}
+object = subset(full, seurat_clusters %in% c(12, 18, 27))
+object = Harmonize(object, batch = "animal")
+DimPlot(object, group.by = "animal")
+FeaturePlot(object, "OPN1SW2", order = TRUE)
+FeaturePlot(object, "OPN1SW1", order = TRUE)
+FeaturePlot(object, "OPN1LW1", order = TRUE)
+FeaturePlot(object, "OPN1LW2", order = TRUE)
+DotPlot2(object, features = unique(toupper(Genes(pr_annotation))))
+DotPlot2(object, features = unique(toupper(Genes(major_annotation))))
+
+ze_pr = subset(object, seurat_clusters %in% c(6))
+DimPlot(ze_pr)
+```
+
+# Rat
+
+```{r, fig.height=5, fig.width=15}
+# object = readRDS("../../Species_Objects/Cone_Objects/Rat_PR_v2.rds")
+DefaultAssay(objectList$Rat) = "RNA"
+objectList$Rat = UpdateEnrichment(objectList$Rat, "Rat")
+plotBatches2(objectList$Rat, 'animal')
+objectList$Rat = Harmonize(objectList$Rat, batch = "animal")
+objectList$Rat$annotated = AnnotateClusters(objectList$Rat, data.frame(old.names = c(0,1,2,3,4,5,6,7), 
+                                                                       new.names = c("rod", "rod", "rod", "rod","red", "rod", "rod", "UV")))
+AnnotatedUmap(objectList$Rat, pr_annotation, color.clusters.by = "annotated", group.by = "annotated", rel_widths = c(1,1.5), color.genes = TRUE)
+```
+
+Rat has the same shrapnel as opossum
+
+# Mouse
+
+```{r, fig.height=5, fig.width=15}
+mouse.conversion = data.frame(old.names = c("Rod", "mlCone", "sCone"),
+                              new.names = c("rod", "red", "UV"))
+
+mouse$annotated = mouse.conversion$new.names[match(mouse$type, mouse.conversion$old.names)]
+
+AnnotatedUmap(mouse, pr_annotation, color.clusters.by = "annotated", group.by = "annotated", rel_widths = c(1,1.5), color.genes = TRUE)
+```
+
+# Human
+
+```{r, fig.height=5, fig.width=15}
+objectList$Human = UpdateEnrichment(objectList$Human, "Human")
+plotBatches2(objectList$Human, batch = "animal")
+objectList$Human = Harmonize(objectList$Human, batch = "animal")
+
+human.conversion = data.frame(old.names = c(0,1,2,3,4,5,6,7,8), 
+                              new.names = c("rod", "rod", "rod", "red", "rod", "rod", "rod", "rod", "UV"))
+
+objectList$Human$annotated = AnnotateClusters(objectList$Human, human.conversion)
+AnnotatedUmap(objectList$Human, pr_annotation, color.clusters.by = "annotated", group.by = "annotated", rel_widths = c(1,1.5), color.genes = TRUE)
+```
+
+Human UV and red distinction is clean despite UMAP
+
+```{r, fig.width=10, fig.height=3}
+humanCone = subset(objectList$Human, annotated != "rod")
+humanCone = ClusterSeurat(humanCone)
+DimPlot(humanCone, group.by = "annotated")
+FeaturePlot(humanCone, c("OPN1SW", "OPN1LW", "OPN1MW", "SAG"), order = FALSE, ncol = 4)
+```
+
+Add species names to objects
+
+```{r}
+objectList = sapply(seq_along(objectList), function(index) {
+  objectList[[index]]$species = metadata$speciesList[[index]]
+  return(objectList[[index]])
+}, USE.NAMES = TRUE)
+names(objectList) = metadata$speciesList
+```
+
+Save processed data
+
+```{r, eval = params$save}
+mclapply(seq_along(objectList), function(i) saveRDS(objectList[[i]], paste0("../../Species_Objects/Cone_Objects/", names(objectList)[i], "_clean_v1.rds")), mc.cores = params$cores)
+```
+
+```{r, eval = params$stopCheckPoint1}
+knitr::knit_exit()
+```
+
+# Checkpoint 1
+
+Read in processed data
+
+```{r}
+# chicken = readRDS("../../Species_Objects/Cone_Objects/Chicken_clean_v3.rds")
+# lizard = readRDS("../../Species_Objects/Cone_Objects/Lizard_clean_v1.rds")
+# opossum = readRDS("../../Species_Objects/Cone_Objects/Opossum_ncbi_clean_v1.rds")
+# squirrel = readRDS("../../Species_Objects/Cone_Objects/Squirrel_clean_v1.rds")
+# human = readRDS("../../Species_Objects/Cone_Objects/Human_clean_v1.rds")
+
+## Corbo adult
+# ze_corbo = readRDS("../../Species_Objects/Cone_Objects/Zebrafish_clean_v1.rds")
+
+## Lyu developing
+# ze_dev = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR2.rds")
+
+## Lyu adult
+# ze_adult = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR_adult.rds") # use version 1 since 2 was renamed to be compatible with Zebrafish_Key but have since made Zebrafish_Lyu_key
+```
+
+
+```{r}
+objectList = list(ZebrafishCorbo = readRDS("../../Species_Objects/Cone_Objects/Zebrafish_clean_v1.rds"), 
+                   ZebrafishDev = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR2.rds"), 
+                   ZebrafishAdult = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR_adult.rds"), 
+                   ChickenV3 = readRDS("../../Species_Objects/Cone_Objects/Chicken_clean_v3.rds"),
+                   ChickenV2 = readRDS("../../Species_Objects/Cone_Objects/Chicken_clean_v2.rds"),
+                   Lizard = readRDS("../../Species_Objects/Cone_Objects/Lizard_clean_v1.rds"),
+                   Opossum = readRDS("../../Species_Objects/Cone_Objects/Opossum_ncbi_clean_v1.rds"), 
+                   Squirrel = readRDS("../../Species_Objects/Cone_Objects/Squirrel_clean_v1.rds"), 
+                   Human = readRDS("../../Species_Objects/Cone_Objects/Human_clean_v1.rds"))
+
+# Checks
+all(rownames(objectList$ZebrafishDev) == rownames(objectList$ZebrafishAdult))
+
+# objectList = mclapply(metadata$speciesList, function(species) readRDS(paste0("../../Species_Objects/Cone_Objects/", species, "_clean_v1.rds")), mc.cores = 1)
+# names(objectList) = metadata$speciesList
+
+# For the ENSEMBL-aligned zebrafish data
+# objectList$Zebrafish = readRDS("../../Species_Objects/Cone_Objects/Zebrafish_clean_v2.rds")
+
+# For chick with corrected opsin
+# objectList$Chicken = readRDS("../../Species_Objects/Cone_Objects/Chicken_clean_v2.rds")
+# objectList$Chicken = readRDS("../../Species_Objects/Cone_Objects/Chicken_clean_v3.rds")
+
+# Lyu developing
+# objectList$ZebrafishDev = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR2.rds")
+
+# Lyu adult
+# objectList$ZebrafishAdult = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR_adult2.rds")
+
+# Modify name
+# levels(objectList$ZebrafishCorbo$annotated) = c(levels(objectList$Zebrafish$annotated), "opn1mw4/\nopn1lw1")
+# objectList$Zebrafish$annotated[objectList$Zebrafish$annotated == "opn1mw4/\nopn1lw1"] = "opn1mw4/opn1lw1"
+# objectList$Zebrafish$annotated[objectList$Zebrafish$annotated == "opn1mw4/opn1lw1"] = "opn1mw4/\nopn1lw1"
+
+# Replace principle with principal
+objectList = lapply(objectList, function(object) {
+  levels(object$annotated) = c(levels(object$annotated), "principal")
+  object$annotated[object$annotated == "principle"] = "principal"
+  object$annotated = factor(factor(object$annotated, levels = names(pr_palette)))
+  return(object)
+})
+
+# Consistent ordering
+objectList = lapply(objectList, function(object) {
+  object$annotated = factor(factor(object$annotated, levels = (names(pr_palette))))
+  return(object)
+})
+
+# Remove goldfish 
+# objectList$Goldfish = NULL
+
+# Add animal id to all species
+# objectList$Zebrafish$animal = "S1"
+objectList$Chicken$orig.file = objectList$Chicken$orig.ident
+objectList[names(objectList) %in% c("Lizard", "Opossum", "Squirrel", "Rat", "Human")] = lapply(names(objectList)[names(objectList) %in% c("Lizard", "Opossum", "Squirrel", "Rat", "Human")], function(species) {
+  UpdateEnrichment(objectList[[species]], species)
+})
+```
+
+```{r, eval = FALSE}
+# Scale data for downstream analysis (don't save these as they are huge bc scale.data is not sparse matrix)
+objectList = lapply(objectList, function(object) ScaleData(object, features = rownames(object)))
+```
+
+## Other zebrafish datasets
+
+```{r, eval = FALSE}
+objectList$Zebrafish = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR2.rds")
+```
+
+```{r, eval = FALSE}
+objectList$Zebrafish = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR_adult2.rds")
+```
+
+Match genes between zebrafish blast and key
+
+```{r, eval = FALSE}
+ze_key = fread("Keys/Zebrafish_key.csv", header = TRUE)
+
+# What fraction of blast symbols are present in this object
+intersection = intersect(unique(ze_key$symbol), rownames(objectList$Zebrafish))
+length(intersection)
+
+# What are we losing? 
+lost = rownames(objectList$Zebrafish)[!rownames(objectList$Zebrafish) %in% unique(ze_key$symbol)]
+
+# Losing mainly si:dkey, BX, and CR/CU/CT genes, we can easily convert these to ensembl identifiers
+Lyu_key = str_split_fixed(rownames(readRDS("../../Species_Objects/Lyu_Dev_snRNA_seurat_obj.rds")), "~~", 2)
+
+summary = data.frame(Lyu_key) %>% setNames(c("id", "symbol"))
+summary$id.match = summary$id %in% ze_key$symbol
+summary$symbol.match = summary$symbol %in% ze_key$symbol
+summary$both.match = summary$id %in% ze_key$symbol & summary$symbol %in% ze_key$symbol
+summary$one.match = xor(summary$id %in% ze_key$symbol, summary$symbol %in% ze_key$symbol)
+
+new_genes = summary$symbol
+new_genes[summary$id.match] = summary$id[summary$id.match]
+new_genes = make.unique(new_genes)
+
+# Now getting 22056 genes from blast graph (before was 14276)
+intersect(new_genes, ze_key$symbol) %>% length
+
+objectList$Zebrafish = RenameFeatures(objectList$Zebrafish, new.names = new_genes)
+saveRDS(objectList$Zebrafish, "../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR_adult2.rds")
+```
+
+```{r, eval = FALSE}
+ze_adult = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR_adult.rds")
+
+# Lyu Zebrafish data
+ze_dev = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR.rds")
+ze_dev$annotated = AnnotateClusters(ze_dev, data.frame(old.names = c(0,1,2,3,4), new.names = c("red","green", "UV", "blue", "rod")))
+ze_dev$animal = ze_dev$timepoint
+ze_dev@misc$orig.feature.names = rownames(ze_dev)
+# ze_dev = RenameFeatures(ze_dev, new.names = rownames(ze_adult))
+saveRDS(ze_dev, "../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR2.rds")
+```
+
+# DCb is actually principle + accessory in same droplet!
+
+Is chicken DBCones3 really a full of DBCone1/2? 
+
+DBCone3 is similar to both 1 and 2
+
+```{r chicken-full-corplot}
+objectList$Chicken = objectList$ChickenV3
+objectList$Chicken$old_names = as.character(objectList$Chicken$annotated)
+objectList$Chicken$old_names[objectList$Chicken$old_names == "accessory"] = "DCa"
+objectList$Chicken$old_names[objectList$Chicken$old_names == "principal"] = "DCc"
+objectList$Chicken$old_names[objectList$Chicken$old_names == "full"] = "DCb"
+pr_palette_oldnames = pr_palette %>% setNames(gsub("principal", "DCc", gsub("accessory", "DCa", gsub("full", "DCb", names(pr_palette)))))
+objectList$Chicken$old_names = factor(objectList$Chicken$old_names, 
+                                      levels = c("rod", "UV", "blue", "green", "red", "DCc", "DCb", "DCa"))
+CorrelationHeatmap(objectList$Chicken, label = TRUE, group.by = "old_names")
+```
+
+DCb is a perfect average of DCa and DCc
+
+```{r, fig.height=8, fig.width=12}
+objectList$Chicken = FindVariableFeatures(objectList$Chicken, selection.method = "vst")
+var_features1 = objectList$Chicken@assays$RNA@var.features
+avgexpr = LogAvgExpr(objectList$Chicken, assay = "RNA", group.by = "old_names", features = var_features1)
+
+linreg.a = lm(DCa ~ DCb + DCc, data = avgexpr)
+summary(linreg.a)
+
+linreg.b = lm(DCb ~ DCa + DCc, data = avgexpr)
+summary(linreg.b)
+
+linreg.c = lm(DCc ~ DCa + DCb, data = avgexpr)
+summary(linreg.c)
+
+avgexpr$`α(DCb) + β(DCc) + γ` = linreg.a$fitted.values
+avgexpr$`α(DCa) + β(DCc) + γ` = linreg.b$fitted.values
+avgexpr$`α(DCa) + β(DCb) + γ` = linreg.c$fitted.values
+
+list1 = list(ExpressionScatter(avgexpr, "DCa", "DCc", genes.to.label = c("THRB", "STBD1")),
+                ExpressionScatter(avgexpr, "DCa", "DCb", genes.to.label = c("THRB", "STBD1")),
+                ExpressionScatter(avgexpr, "DCc", "DCb", genes.to.label = c("THRB", "STBD1")))
+
+list2 = list(ExpressionScatter(avgexpr, "α(DCb) + β(DCc) + γ", "DCa", genes.to.label = c("THRB", "STBD1"),
+               # xlab(paste0('(', signif(linreg.a$coefficients[['DCb']], 2), ')DCb + (', signif(linreg.a$coefficients[['DCc']], 2), ')DCb + ', signif(linreg.a$coefficients[['(Intercept)']], 2))),
+               # xlab(bquote(.('DCa + DCb (') ~ alpha==.(signif(linreg.a$coefficients[['DCb']], 2)) ~ .(',') ~ beta==.(signif(linreg.a$coefficients[['DCc']], 2)) ~ .(')'))),
+             xlab = paste0('αDCb + βDCc + γ\nα=', signif(linreg.a$coefficients[['DCb']], 2),'\nβ = ', signif(linreg.a$coefficients[['DCc']], 2), '\nγ = ', signif(linreg.a$coefficients[['(Intercept)']], 2))),
+                ExpressionScatter(avgexpr, "α(DCa) + β(DCc) + γ", "DCb", genes.to.label = c("THRB", "STBD1"),
+                                  # xlab(bquote(.('DCa + DCb (') ~ alpha==.(signif(linreg.b$coefficients[['DCa']], 2)) ~ .(',') ~ beta==.(signif(linreg.b$coefficients[['DCc']], 2)) ~ .(')'))),
+
+                                  xlab = paste0('αDCa + βDCc + γ\nα=', signif(linreg.b$coefficients[['DCa']], 2),'\nβ = ', signif(linreg.b$coefficients[['DCc']], 2), '\nγ = ', signif(linreg.c$coefficients[['(Intercept)']], 2))),
+                ExpressionScatter(avgexpr, "α(DCa) + β(DCb) + γ", "DCc", genes.to.label = c("THRB", "STBD1"),
+                                  # xlab(bquote(.('DCa + DCb (') ~ alpha==.(signif(linreg.c$coefficients[['DCa']], 2)) ~ .(',') ~ beta==.(signif(linreg.c$coefficients[['DCb']], 2)) ~ .(')')))
+                                  xlab = paste0('αDCa + βDCb + γ\nα=', signif(linreg.c$coefficients[['DCa']], 2),'\nβ = ', signif(linreg.c$coefficients[['DCb']], 2), '\nγ = ', signif(linreg.b$coefficients[['(Intercept)']], 2)))
+                )
+
+bottom = plot_grid(TitlePlot(plot_grid(plotlist = list1, ncol = 3), 'Similarity between DCa, DCb, DCc'), 
+                   TitlePlot(plot_grid(plotlist = list2, ncol = 3), 'Similarity to best-fit linear combination'),
+                   nrow = 2, labels = c('C', 'D'), label_size = 20, rel_heights = c(1,1.16))
+bottom
+```
+
+## Figure S1
+
+```{r lin-reg-chick, fig.height=11, fig.width=8.5}
+top = plot_grid(
+  PrettyUmap2(objectList$Chicken, group.by = "old_names", cols = pr_palette_oldnames, angle = 3*pi/4, alpha = 0.1), 
+  # DotPlot(objectList$Chicken, features = (c("RHO", "PDE6H", "ZEB2", "CALB1")), group.by = "old_names") + scale_color_gradient(low = "white", high = "brown") + theme(axis.title = element_blank()),
+  VlnPlot(objectList$Chicken, 
+          features = (c("RHO", "PDE6H", "ZEB2", "CALB1", "THRB", "STBD1")), 
+          cols = pr_palette_oldnames,
+          fill.by = 'ident',
+          group.by = "old_names", stack = TRUE, flip = FALSE) + 
+    NoLegend() + 
+    # scale_fill_manual(values = rep('black', 6)) + 
+    theme(axis.title.y = element_blank()), 
+  ncol = 2, rel_widths = c(1,1), labels = LETTERS, label_size = 20
+  )
+
+figS1 = plot_grid(top, bottom, nrow = 2, rel_heights = c(0.6, 1))
+```
+
+
+```{r lin-reg-chick, fig.height=11, fig.width=8.5}
+png('figures/figS1.png', height=11, width=8.5, units = 'in', res = 600)
+figS1
+dev.off()
+```
+
+
+```{r lin-reg-chick, fig.height=11, fig.width=8.5}
+pdf('figures/figS1.pdf', height=11, width=8.5)
+figS1
+dev.off()
+```
+
+Parameter sweep
+
+```{r}
+results = lapply(seq(0, 1, by = 0.01), function(alpha) {
+  lapply(seq(0, 1, by = 0.01), function(beta){
+    r.squared = cor(avgexpr$DCb, alpha*avgexpr$DCa + beta*avgexpr$DCc)^2
+    rmse = RMSE(avgexpr$DCb, alpha*avgexpr$DCa + beta*avgexpr$DCc)
+    return(data.frame(alpha = alpha, beta = beta, r.squared = r.squared, rmse = rmse))
+  })
+})
+
+param_summary = do.call(rbind, unlist(results, recursive = FALSE))
+param_summary$color[which.min(param_summary$rmse),] = "red"
+
+param_summary$color = 'yellow'
+param_summary$color[param_summary$alpha > 0.5 & param_summary$beta > 0.5] = 'lightblue'
+param_summary$color[param_summary$alpha <= 0.5 & param_summary$beta > 0.5] = 'lightgreen'
+param_summary$color[param_summary$alpha <= 0.5 & param_summary$beta <= 0.5] = 'violet'
+
+param_summary$color[param_summary$alpha > 0.45 & param_summary$beta > 0.45 &
+                      param_summary$alpha < 0.55 & param_summary$beta < 0.55] = 'red'
+
+ggplot(na.omit(param_summary), aes(alpha, beta, z=rmse, color=color)) +
+  axes_3D() +
+  # stat_wireframe(alpha=.5, theta=150) +
+  stat_3D(aes(color=rmse), alpha=.5) +
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_color_gradientn(colors=plot3D::jet2.col()) +
+  labs_3D(hjust=c(0,1,1), vjust=c(1, 1, -0.2), angle=c(0, 0, 90))
+```
+
+# Cell type proportions across species
+
+For in situ, keep DC-A and DC-P separate
+
+Comparison to Kram et al. 2010
+
+```{r, fig.height=4, fig.width=8}
+chicken.table = as.data.frame.matrix(CelltypeProportionBarplot(objectList$ChickenV3, return.table = TRUE, normalize = FALSE))
+chicken.table$DC = chicken.table$full + (chicken.table$accessory + chicken.table$principal)/2
+chicken.table = chicken.table %>% select (-c(accessory, principal, rod, full))
+chicken.table = chicken.table/rowSums(chicken.table) # Renormalize
+chicken.summary = reshape2::melt(as.matrix(chicken.table)) %>% setNames(c("Sample", "Type", "Proportion"))
+chicken.summary$Type = factor(chicken.summary$Type, levels = c("UV", "blue", "green", "red", "DC"))
+p1 = TitlePlot(ggbarplot(chicken.summary, y = "Proportion", x = "Type", fill = "Type", add = c("mean_sd", "jitter"), width = 1, position = position_dodge(width = 0.7)), 'E18 chick\n(Yamagata et al. 2021)') + 
+  scale_fill_manual(values = rev(c("darkgrey", "orangered", "chartreuse3", "deepskyblue", "violet"))) + 
+  scale_y_continuous(limits = c(0,0.65))+
+  scale_x_discrete(expand = expansion(add = 1))+
+  RotatedAxis()+
+  theme_dario() + NoLegend()
+
+# Kram data reproduced using automeris.io
+kram_data = read.csv('wpd_datasets.csv') %>% setNames(c("Type", "Section", "Proportion"))
+kram_data$Proportion = kram_data$Proportion/100
+kram_data$Type = factor(kram_data$Type, levels = c("UV", "blue", "green", "red", "DC"))
+p2 = TitlePlot(ggbarplot(kram_data, y = "Proportion", x = "Section", fill = "Type", position = position_dodge(0.7)), 'P15 chicken\n(Kram et al. 2010)') + scale_fill_manual(values = c(DC = "darkgrey", red = "orangered", green = "chartreuse3", blue = "deepskyblue", UV = "violet")) + 
+  NoLegend() +
+  scale_y_continuous(limits = c(0,0.65))+
+  theme_dario()
+
+pdf('figures/figS2_chick_prop.pdf', height=4, width=8)
+plot_grid(p1, p2, align = 'h', axis = 'bt', rel_widths = c(1,2), labels = letters, label_size = 20)
+dev.off()
+```
+
+With principal and accessory separate
+
+```{r, fig.height=4, fig.width=4}
+chicken.table = as.data.frame.matrix(CelltypeProportionBarplot(objectList$ChickenV3, return.table = TRUE, normalize = FALSE))
+chicken.table$principal = chicken.table$full + chicken.table$principal
+chicken.table$accessory = chicken.table$full + chicken.table$accessory
+chicken.table = chicken.table %>% select (-c(full))
+# chicken.table = chicken.table/rowSums(chicken.table) # Renormalize
+chicken.table
+chicken.table/rowSums(chicken.table)
+```
+
+
+```{r, fig.height=4, fig.width=4}
+# Normalize in such a way so that double cones are considered one cluster
+chicken.table$DC = (chicken.table$accessory + chicken.table$principal)/2
+chicken.table$scale.factor = rowSums(chicken.table[,c('red', 'green', 'blue', 'UV', 'rod', 'DC')])
+chicken.table.norm = chicken.table/chicken.table$scale.factor
+chicken.summary = reshape2::melt(as.matrix(chicken.table.norm %>% select(-c(DC, scale.factor)))) %>% setNames(c("Sample", "Type", "Proportion"))
+chicken.summary$Type = factor(chicken.summary$Type, levels = (names(pr_palette)))
+
+Chicken.barplot = ggbarplot(chicken.summary, y = "Proportion", x = "Type", fill = "Type", add = c("mean_se", "jitter")) + 
+      NoLegend() +
+      scale_y_continuous(labels = percent, expand = expansion(mult = c(0,0.1))) +  # Convert proportions to percentages
+      scale_fill_manual(values = pr_palette) + 
+      coord_flip() + 
+      rremove("ylab")
+
+Chicken.barplot
+```
+
+For lizard
+
+```{r, fig.height=4, fig.width=4}
+chicken.table = as.data.frame.matrix(CelltypeProportionBarplot(objectList$Lizard, return.table = TRUE, normalize = FALSE))
+# chicken.table$principal = chicken.table$full + chicken.table$principal
+# chicken.table$accessory = chicken.table$full + chicken.table$accessory
+# chicken.table = chicken.table %>% select (-c(full))
+# chicken.table = chicken.table/rowSums(chicken.table) # Renormalize
+chicken.table/rowSums(chicken.table)
+```
+
+
+```{r, fig.height=4, fig.width=4}
+# Normalize in such a way so that double cones are considered one cluster
+chicken.table$DC = (chicken.table$accessory + chicken.table$principal)/2
+chicken.table$scale.factor = rowSums(chicken.table[,c('red', 'green', 'blue', 'UV', 'rod', 'DC')])
+chicken.table.norm = chicken.table/chicken.table$scale.factor
+chicken.summary = reshape2::melt(as.matrix(chicken.table.norm %>% select(-c(DC, scale.factor)))) %>% setNames(c("Sample", "Type", "Proportion"))
+chicken.summary$Type = factor(chicken.summary$Type, levels = (names(pr_palette)))
+
+Lizard.barplot = ggbarplot(chicken.summary, y = "Proportion", x = "Type", fill = "Type", add = c("mean_se", "jitter")) + 
+      NoLegend() +
+      scale_y_continuous(labels = percent, expand = expansion(mult = c(0,0.1))) +  # Convert proportions to percentages
+      scale_fill_manual(values = pr_palette) + 
+      coord_flip() + 
+      rremove("ylab")
+
+Lizard.barplot
+```
+
+# PR summary
+
+```{r pr_summary, fig.height=25, fig.width=10}
+plot_grid(plotlist = lapply(seq_along(objectList), function(index) AnnotatedUmap(objectList[[index]], 
+                                                                                 pr_annotation, color.clusters.by = "annotated", group.by = "annotated", 
+                                                                                 rel_widths = c(1,1.7), color.genes = FALSE, title = names(objectList)[[index]], 
+                                                                                 coord_flip = FALSE)), 
+          nrow = length(objectList), align = 'v', axis = 'lr')
+```
+
+# Remove chicken full double cones from downstream analysis
+
+```{r}
+fullList = objectList
+objectList = objectList[names(objectList) %in% c("ZebrafishAdult", "ChickenV3", "Lizard", "Opossum", "Squirrel", "Human")]
+objectList$ZebrafishAdult = objectList$ZebrafishAdult[,which(!is.na(objectList$ZebrafishAdult$annotated))]
+
+# Remove full from chicken
+objectList$ChickenV3 = subset(objectList$ChickenV3, annotated != "full")
+# objectList$ChickenV2 = subset(objectList$ChickenV2, annotated != "full")
+
+names(objectList) = c("Zebrafish", "Chicken", "Lizard", "Opossum", "Squirrel", "Human")
+
+# Rename opossum accessory cluster as unknown
+# objectList$Opossum$annotated[objectList$Opossum$annotated == "accessory"]
+```
+
+# Figure S7: opn1mw4/opn1lw1+ zebrafish cones
+
+```{r}
+fullList$ZebrafishCorbo$annotated = factor(fullList$ZebrafishCorbo$annotated, 
+                                           levels = c('opn1mw4/\nopn1lw1', levels(fullList$ZebrafishCorbo$annotated)))
+fullList$ZebrafishCorbo$annotated[is.na(fullList$ZebrafishCorbo$annotated)] = 'opn1mw4/\nopn1lw1'
+fullList$ZebrafishDev$annotated = factor(fullList$ZebrafishDev$annotated, 
+                                         levels = c('opn1mw4/\nopn1lw1', levels(fullList$ZebrafishDev$annotated)))
+fullList$ZebrafishDev$annotated[is.na(fullList$ZebrafishDev$annotated)] = 'opn1mw4/\nopn1lw1'
+fullList$ZebrafishAdult$annotated = factor(fullList$ZebrafishAdult$annotated, 
+                                           levels = c('opn1mw4/\nopn1lw1', levels(fullList$ZebrafishAdult$annotated)))
+fullList$ZebrafishAdult$annotated[is.na(fullList$ZebrafishAdult$annotated)] = 'opn1mw4/\nopn1lw1'
+```
+
+```{r, fig.height=8, fig.width=8}
+# pdf('figures/figS7_opn1mw4_opn1lw1_zebrafish.pdf', height=8, width=12)
+p1 = plot_grid(
+  plot_grid(
+    TitlePlot(PrettyUmap2(fullList$ZebrafishCorbo, group.by = 'annotated', alpha = 0.2, cols = pr_palette, min.segment.length = 0.05), 'Adult\n(Ogawa and Corbo 2021)'), 
+    TitlePlot(PrettyUmap2(fullList$ZebrafishDev, group.by = 'annotated', alpha = 0.2, cols = pr_palette, min.segment.length = 0.05), '4/5 dpf (Lyu et al. 2023)'), 
+    TitlePlot(PrettyUmap2(fullList$ZebrafishAdult, group.by = 'annotated', alpha = 0.2, cols = pr_palette, min.segment.length = 0.05), 'Adult (Lyu et al. 2023)'), nrow = 3), 
+  ggarrange(
+    plotlist = PrepStack(list(NULL,
+      DotPlot2(fullList$ZebrafishCorbo, group.by = 'annotated', features = setdiff(Genes(pr_annotation), c("zeb2b", "RHO", 'zeb2a', 'stbd1', 'thrb')), coord.flip = FALSE), #+ NoLegend(),
+      DotPlot2(fullList$ZebrafishDev, group.by = 'annotated', features = setdiff(Genes(pr_annotation), c("zeb2b", "RHO", 'zeb2a', 'stbd1', 'thrb')), coord.flip = FALSE), #+ NoLegend(),
+      DotPlot2(fullList$ZebrafishAdult, group.by = 'annotated', features = setdiff(Genes(pr_annotation), c("zeb2b", "RHO", 'zeb2a', 'stbd1', 'thrb')), coord.flip = FALSE)), 
+      ncol = 1
+    ),
+    ncol = 1, nrow = 4, common.legend = TRUE, legend = 'right', align = 'v', heights = c(0.5,2,2,2.5)
+  ),
+  # ggarrange(plotlist = lapply(FeaturePlot(subset(fullList$ZebrafishAdult, annotated %in% c('red', 'green', 'opn1mw4/\nopn1lw1')), c('opn1lw1', 'opn1lw2', 'opn1mw1', 'opn1mw2', 'opn1mw3', 'opn1mw4'), reduction = 'umap', combine = FALSE), function(plot) theme_umap(plot + scale_color_gradient(limits = c(0,6), low = 'grey', high = 'blue', na.value = 'blue'), remove.axes = FALSE)), 
+  #                           common.legend = TRUE, nrow = 6, legend = 'right'),
+  ncol = 2, nrow = 1, align = 'h', axis = 'bt', labels = LETTERS, label_size = 20, rel_widths = c(1,1.5)
+)
+# dev.off()
+
+p1
+
+# DotPlot2(fullList$ZebrafishAdult, group.by = 'annotated', features = setdiff(Genes(pr_annotation), c("zeb2b", "RHO", 'zeb2a', 'stbd1', 'thrb')), coord.flip = FALSE)
+```
+
+```{r, fig.height=8, fig.width=5.5}
+# feature.plots = lapply(FeaturePlot(subset(fullList$ZebrafishAdult, annotated %in% c('red', 'green', 'opn1mw4/\nopn1lw1')), c('opn1lw1', 'opn1lw2', 'opn1mw1', 'opn1mw2', 'opn1mw3', 'opn1mw4'), reduction = 'umap', combine = FALSE), function(plot) theme_umap(plot + scale_color_gradient(limits = c(0,6), low = 'grey', high = 'blue', na.value = 'blue'), remove.axes = FALSE))
+# 
+# plotlist = list(feature.plots[[1]], 
+#                 feature.plots[[2]], 
+#                 NULL, 
+#                 NULL, 
+#                 feature.plots[[3]], 
+#                 feature.plots[[4]], 
+#                 feature.plots[[5]], 
+#                 feature.plots[[6]]
+#                 )
+# 
+# p3 = ggarrange(plotlist = plotlist, 
+#                common.legend = TRUE, ncol = 4, nrow = 2, legend = 'right', labels = c('C'), font.label = list(size = 20))
+```
+
+Try using PCA instead of UMAP
+
+```{r}
+# ze_subset = subset(fullList$ZebrafishAdult, annotated %in% c('red', 'green', 'opn1mw4/\nopn1lw1'))
+# ze_subset = ClusterSeurat(ze_subset)
+# DimPlot(ze_subset, group.by = 'annotated')
+# DimPlot(ze_subset, group.by = 'annotated', reduction = 'pca')
+feature.plots = lapply(FeaturePlot(ze_subset, c('opn1lw1', 'opn1lw2', 'opn1mw1', 'opn1mw2', 'opn1mw3', 'opn1mw4'), reduction = 'pca', combine = FALSE), 
+                       function(plot) theme_umap(plot + scale_color_gradient(limits = c(0,6), low = 'grey', high = 'blue', na.value = 'blue'), remove.axes = FALSE) + 
+                         xlab('PC1') + 
+                         ylab('PC2'))
+
+feature.plots.2 = list(theme_umap(DimPlot(ze_subset, group.by = 'annotated', reduction = 'pca', cols = pr_palette) + NoLegend(), title = '') + xlab('PC1') + ylab('PC2'), 
+                feature.plots[[1]], 
+                feature.plots[[2]], 
+                NULL,
+                # NULL,
+                # NULL, 
+                feature.plots[[3]], 
+                feature.plots[[4]], 
+                feature.plots[[5]], 
+                feature.plots[[6]]
+                )
+
+# p3 = ggarrange(plotlist = plotlist, 
+#                common.legend = TRUE, ncol = 4, nrow = 2, legend = 'right', labels = c('C'), font.label = list(size = 20))
+               #align = 'v', axis = 'lr')
+
+# plotlist = append(plotlist, legend)
+
+# p2 = plot_grid(theme_umap(DimPlot(ze_subset, group.by = 'annotated', reduction = 'pca', cols = pr_palette) + NoLegend(), title = '') + xlab('PC1') + ylab('PC2'), NULL, NULL, NULL, nrow = 2, ncol = 2)
+
+
+p3 = plot_grid(
+  plot_grid(plotlist = PrepStack(lapply(feature.plots.2, function(plot) plot + NoLegend() + theme(plot.margin = unit(c(0,0,0,0), 'mm'))), ncol = 4, nrow = 2), ncol = 4, nrow = 2, align = 'hv', axis = 'btlr'), 
+  get_legend(feature.plots[[1]]), 
+  nrow = 1, rel_widths = c(10,1), labels = c('C'), label_size = 20
+)
+
+p3
+ # plot_grid(plotlist = PrepStack(lapply(feature.plots.2, function(plot) plot + NoLegend() + theme(plot.margin = unit(c(0,0,0,0), 'mm'))), ncol = 4, nrow = 2), ncol = 4, nrow = 2, align = 'hv', axis = 'btlr')
+```
+
+
+```{r, fig.height=11, fig.width=7}
+# plot_grid(p1, p3, rel_widths = c(2,1), nrow = 2)
+pdf('figures/figS7_opn1mw4_opn1lw1_zebrafish.pdf', height=11, width=7)
+plot_grid(p1, p3, rel_heights = c(2,1), nrow = 2)
+dev.off()
+```
+
+
+```{r}
+FeaturePlot(fullList$ZebrafishCorbo, c('opn1lw1', 'opn1lw2', 'opn1mw1', 'opn1mw2', 'opn1mw3', 'opn1mw4'), reduction = 'umap', combine = FALSE)
+FeaturePlot(fullList$ZebrafishDev, c('opn1lw1', 'opn1lw2', 'opn1mw1', 'opn1mw2', 'opn1mw3', 'opn1mw4'), reduction = 'umap', combine = FALSE)
+```
+
+# Figure 1
+
+```{r pr-summary-prop, fig.width=2.5, fig.height=15}
+# Rotate rods to top
+# angles = c(pi/2, 4*pi/5, pi/12, -pi/3, -3*pi/5, 3*pi/5)
+angles = c(-pi/2.5, 4*pi/5, pi/12, 2*pi/3.5, pi, 3*pi/5)
+
+umaps = plot_grid(plotlist = lapply(seq_along(objectList), function(index) AnnotatedUmap(objectList[[index]], 
+                                                                                 pr_annotation, 
+                                                                                 color.clusters.by = "annotated", 
+                                                                                 group.by = "annotated", 
+                                                                                 rel_widths = c(1,1.5,0.5), 
+                                                                                 color.genes = FALSE, 
+                                                                                 title = names(objectList)[[index]], 
+                                                                                 coord_flip = TRUE, 
+                                                                                 plot.dotplot = FALSE,
+                                                                                 plot.proportions = FALSE, 
+                                                                                 angle = angles[[index]],
+                                                                                 pad = 4, 
+                                                                                 alpha = 0.03, 
+                                                                                 density = FALSE, 
+                                                                                 pretty.umap = TRUE, 
+                                                                                 label = TRUE, 
+                                                                                 min.segment.length = 0.2,
+                                                                                 nudge_y = -1)+theme(axis.title = element_blank())), 
+          nrow = length(objectList), align = 'v', axis = 'bt', rel_heights = c(1,1,1,1,1,1))
+
+
+pdf('figures/fig1_umaps.pdf', height=15, width=2.5)
+umaps
+dev.off()
+```
+
+
+```{r pr-summary-prop, fig.height=5, fig.width=7}
+# Rename lizard opsins
+# objectList$Lizard = fullList$Lizard
+# objectList$Squirrel = fullList$Squirrel
+
+# objectList$Lizard = RenameFeatures(fullList$Lizard, new.names = gsub('LOC132767849', 'OPN1LW', gsub('LOC132773706', 'OPN1MW', gsub('LOC132767847', 'OPN2SW', rownames(fullList$Lizard)))))
+
+# Rename squirrel red opsin
+# objectList$Squirrel = RenameFeatures(fullList$Squirrel, new.names = gsub('ENSSTOG00000024701', 'OPN1LW', rownames(fullList$Squirrel)))
+
+# DotPlot2(objectList$Lizard, features = c('OPN1LW', 'OPN1MW', 'OPN2SW', 'LOC132773706'), group.by = 'annotated', assay = 'RNA')
+```
+
+Zebrafish ortholog of calbindin
+
+```{r}
+ze2ch = readRDS('orthology_graphs/ze2ch.rds')
+ConvertGeneSymbolsFromMatrix(t(ze2ch), c('OPN1LW', 'CALB1', 'OPN1MSW', 'SAMD7'))
+```
+
+
+```{r pr-summary-prop, fig.height=15, fig.width=3}
+dotplot.list = lapply(seq_along(objectList), function(index) {
+  AnnotatedDotPlot(objectList[[index]], pr_annotation2, group.by = "annotated", color.clusters.by = "annotated", assay = 'RNA', features = if(index == 1) setdiff(rev(Genes(pr_annotation2)), c("zeb2b", "RHO")) else rev(Genes(pr_annotation2)), color.genes = FALSE, coord.flip = FALSE) + 
+    NoLegend() + 
+    RotatedAxis() + 
+    scale_x_discrete(labels = function(label) gsub('ENSSTOG00000024701', 'OPN1LW', gsub('LOC132767849', 'OPN1LW', gsub('LOC132773706', 'OPN1MW', gsub('LOC132767847', 'OPN2SW', label)))))+
+    theme(axis.title = element_blank(), axis.text.y = element_blank())
+  })
+
+dotplots = plot_grid(plotlist = Interleave(dotplot.list),
+                       #append(dotplot.list[1:3], list(NULL, dotplot.list[[5]], NULL, dotplot.list[[5]], NULL, dotplot.list[[6]])), 
+                     nrow = length(Interleave(dotplot.list)), 
+  align = 'v', 
+  axis = 'lr', 
+  rel_heights = c(0.9, 0.01,
+                  1.1, -0.01,
+                  1.1, 0.01, 
+                  0.80, 0.12, 
+                  0.65, 0.24, 
+                  0.65)
+  )
+
+dotplots + theme(plot.margin = unit(c(0,0,0,0.5), 'cm'))
+
+ggsave('figures/fig1_dotplots.pdf', height=15, width=2.9)
+```
+
+```{r, fig.height=15, fig.width=4}
+dotplot.list.legend = lapply(seq_along(objectList), function(index) {
+  AnnotatedDotPlot(objectList[[index]], pr_annotation2, group.by = "annotated", color.clusters.by = "annotated",
+                       features = if(index == 1) setdiff(Genes(pr_annotation2), c("zeb2b", "RHO")) else Genes(pr_annotation2), color.genes = FALSE) + RotatedAxis() + theme(axis.title = element_blank(), axis.text.y = element_blank())
+  })
+
+# dotplot.list[[1]]
+legend = plot_grid(get_legend(dotplot.list.legend[[1]]))
+
+# dotplot.list
+plot_grid(dotplots + theme(plot.margin = unit(c(0,0,0,0.5), 'cm')), 
+          legend,
+          nrow = 1, 
+          rel_widths = c(2,1))
+
+ggsave('figures/fig1_dotplots.pdf', height=15, width=4)
+```
+
+```{r pr-summary-prop, fig.height=15, fig.width=4}
+# Bar plot
+barplot.list = lapply(seq_along(objectList), function(index) CelltypeProportionBarplot(objectList[[index]], 
+                                                                                               show.all = FALSE) + 
+                        scale_fill_manual(values = pr_palette) + 
+                        scale_y_continuous(labels = percent, expand = expansion(mult = c(0,0.1))) +  # Convert proportions to percentages
+                        labs(y = NULL)+
+                        theme(axis.text.y = element_text(hjust = 0.5), plot.margin = unit(c(0, 1, 0, 0), "cm"))+
+                        coord_flip() + 
+                        rremove("ylab"))
+
+barplot.list[[2]] = Chicken.barplot + theme(axis.text.y = element_text(hjust = 0.5)) + labs(y = NULL)
+barplot.list[[3]] = Lizard.barplot + theme(axis.text.y = element_text(hjust = 0.5)) +labs(y = NULL)
+
+barplots = plot_grid(
+  plotlist = barplot.list, 
+  nrow = 6, 
+  align = 'v', 
+  axis = 'lr',
+  rel_heights = c(5,7,7,4,3,3)
+)
+barplots
+```
+
+
+```{r pr-summary-prop, fig.height=18, fig.width=6.5}
+dotbarplots = plot_grid(
+  plotlist = c(rbind(dotplot.list, barplot.list)), # interweave the plots
+  ncol = 2,
+  nrow = 6, 
+  align = 'hv', 
+  axis = 'btlr',
+  rel_widths = c(1.1,0.9),
+  rel_heights = c(0.85,1,1,0.75,0.65,0.65)
+)
+
+pdf('figures/fig1_dotbarplots.pdf', height=14, width=6.5)
+dotbarplots
+dev.off()
+```
+
+```{r, fig.height=15, fig.width=9}
+fig1 = plot_grid(umaps, NULL, dotplots, NULL, barplots, 
+          nrow = 1, 
+          rel_widths = c(3, 0.1, 4, 0.1, 3), 
+          # labels = c('', 'b', 'c', ' ', 'd', ''), 
+          # label_size = 20, 
+          label_y = 1)
+
+pdf('figures/fig1.pdf', height=9, width=18)
+fig1
+dev.off()
+```
+
+# Cell type markers within species
+
+```{r, fig.height=5, fig.width=15}
+markersList = lapply(objectList, function(object) TopNDEGs(DownsampleSeurat(object, group.by = "annotated", size = 100), group.by = "annotated", n = 40))
+```
+
+```{r pr-heatmaps, fig.height=30, fig.width=10}
+plot_grid(
+  plotlist = lapply(seq_along(objectList), function(index) DoHeatmap(DownsampleSeurat(objectList[[index]], group.by = "annotated", size = 50), features = markersList[[index]]$feature, group.by = "annotated") + NoLegend() + scale_fill_gradientn(colors = c("blue", "white", "red")) + theme(axis.text.y = element_blank())),
+  nrow = length(objectList), 
+  labels = names(objectList),
+  hjust = 0,
+  align = "hv", 
+  axis = "bt"
+)
+```
+
+# Cell type relationships within species
+
+## Linear model coefficient analysis
+
+```{r}
+coefficients.list = lapply(c("Chicken", "Lizard") %>% setNames(c("Chicken", "Lizard")), function(species){
+  object = SeuratBootstrap(objectList[[species]])
+  object$annotated = gsub("principle", "principal", object$annotated)
+  object = FindVariableFeatures(object, selection.method = "vst")
+  avgexpr = AvgExpr(object, assay = "RNA", group.by = "annotated", features = object@assays$RNA@var.features)
+  
+  # principal
+  linreg = lm(principal ~ red + green + blue + UV, data = avgexpr)
+  principal.coef = summary(linreg)$coefficients
+  principal.r.squared = summary(linreg)$r.squared
+  
+  # accessory
+  linreg = lm(accessory ~ red + green + blue + UV, data = avgexpr)
+  accessory.coef = summary(linreg)$coefficients
+  accessory.r.squared = summary(linreg)$r.squared
+
+  return(list(principal.coef = principal.coef, 
+              principal.r.squared = principal.r.squared, 
+              accessory.coef = accessory.coef, 
+              accessory.r.squared = accessory.r.squared))
+})
+
+results = data.frame(chicken.principal = coefficients.list$Chicken$principal.coef[,1], 
+                     chicken.accessory = coefficients.list$Chicken$accessory.coef[,1],
+                     lizard.principal = coefficients.list$Lizard$principal.coef[,1],
+                     lizard.accessory = coefficients.list$Lizard$accessory.coef[,1])
+
+summary = rbind(data.frame(paste0(signif(coefficients.list$Chicken$principal.coef[,1], 2), " (", signif(coefficients.list$Chicken$principal.coef[,4], 2), ")"),
+                     paste0(signif(coefficients.list$Chicken$accessory.coef[,1], 2), " (", signif(coefficients.list$Chicken$accessory.coef[,4], 2), ")"), 
+                     paste0(signif(coefficients.list$Lizard$principal.coef[,1], 2), " (", signif(coefficients.list$Lizard$principal.coef[,4], 2), ")"), 
+                     paste0(signif(coefficients.list$Lizard$accessory.coef[,1], 2), " (", signif(coefficients.list$Lizard$accessory.coef[,4], 2), ")")), 
+                            signif(unlist(lapply(coefficients.list, function(x) c(x$principal.r.squared, x$accessory.r.squared))), 2))
+
+colnames(summary) = unlist(lapply(c("Chicken", "Lizard"), function(species) lapply(c("principal", "accessory"), function(type) paste(species, type))))
+rownames(summary) = c("Intercept", "red", 'green', 'blue', 'UV', 'Fit (R^2)')
+write.csv(summary, "linear_modeling_summary_v2.csv")
+```
+
+Bootstrap analysis
+
+```{r}
+objectList$Chicken = chick2
+coefficients.boot.list = do.call(rbind, lapply(seq_len(10), function(seed) {
+  coefficients.list = lapply(c("Chicken", "Lizard") %>% setNames(c("Chicken", "Lizard")), function(species){
+    set.seed(seed)
+    object = SeuratBootstrap(objectList[[species]])
+    object$annotated = gsub("principle", "principal", object$annotated)
+    object = FindVariableFeatures(object, selection.method = "vst")
+    avgexpr = AvgExpr(object, assay = "RNA", group.by = "annotated", features = object@assays$RNA@var.features)
+    
+    # principal
+    linreg = lm(principal ~ red + green + blue + UV, data = avgexpr)
+    principal.coef = summary(linreg)$coefficients
+    principal.r.squared = summary(linreg)$r.squared
+    
+    # accessory
+    linreg = lm(accessory ~ red + green + blue + UV, data = avgexpr)
+    accessory.coef = summary(linreg)$coefficients
+    accessory.r.squared = summary(linreg)$r.squared
+    
+    # rod
+    linreg = lm(rod ~ red + green + blue + UV, data = avgexpr)
+    rod.coef = summary(linreg)$coefficients
+    rod.r.squared = summary(linreg)$r.squared
+  
+    return(list(principal.coef = principal.coef, 
+                principal.r.squared = principal.r.squared, 
+                accessory.coef = accessory.coef, 
+                accessory.r.squared = accessory.r.squared, 
+                rod.coef = rod.coef, 
+                rod.r.squared = rod.r.squared))
+  })
+  
+  results = reshape2::melt(as.matrix(data.frame(chicken.principal = coefficients.list$Chicken$principal.coef[,1], 
+                                                 chicken.accessory = coefficients.list$Chicken$accessory.coef[,1],
+                                                 chicken.rod = coefficients.list$Chicken$rod.coef[,1],
+                                                 lizard.principal = coefficients.list$Lizard$principal.coef[,1],
+                                                 lizard.accessory = coefficients.list$Lizard$accessory.coef[,1], 
+                                                 lizard.rod = coefficients.list$Lizard$rod.coef[,1])))
+  
+  return(results)
+})) %>% setNames(c("type", "predict", "value"))
+
+
+ggbarplot(coefficients.boot.list, y = "value", x = "type", fill = "type", add = c("jitter", "mean"), facet.by = "predict") + 
+      NoLegend()+
+      # facet_wrap(~predict)+
+      scale_y_continuous(expand = expansion(mult = c(0, .1)))
+
+```
+
+## Pairwise pearson correlations
+
+```{r all-corplots, fig.height=8.5, fig.width=15}
+# objectList = lapply(objectList, function(object) FindVariableFeatures(object, selection.method = "vst"))
+# var_features2 = objectList$Chicken@assays$RNA@var.features
+corlist = lapply(names(objectList), function(species) grid.grabExpr(draw(CorrelationHeatmap(objectList[[species]], group.by = "annotated", title = species, label = TRUE))))
+
+plot_grid(
+  plotlist = corlist,
+  ncol = 3, 
+  align = "hv", 
+  axis = "bt"
+)
+```
+
+## Differential gene expression clustering trees
+
+```{r, fig.height=17, fig.width=15}
+delist = mclapply(names(objectList), function(species) grid.grabExpr(draw(DEGTree(objectList[[species]], 
+                                                                                  log2FC.threshold = 1, 
+                                                                                  p_val_adj.threshold = 0.001, 
+                                                                                  title = species))),
+                  mc.cores = 1)
+```
+
+
+```{r, fig.height=17, fig.width=15}
+pdf("figures/fig3_pairwise.pdf", height = 17, width =15)
+plot_grid(
+  plotlist = c(corlist, delist),
+  ncol = 3, 
+  align = "hv", 
+  axis = "bt"
+)
+```
+
+```{r}
+DEGTree(objectList$Lizard, log2FC.threshold = 1, p_val_adj.threshold = 0.001)
+```
+
+## PCA plots making the point of the UV spectrum gradient
+
+Can center but not scale so that lowly expressed genes are weighted as less important
+
+```{r pca-plots, fig.width=16, fig.height=8}
+plotlist = lapply(names(objectList), function(species) {
+    PseudoBulkPCA(objectList[[species]], group.by = "annotated", title = species, scale = FALSE, min.pct.expressed = 0)
+})
+
+plot_grid(
+  plotlist = plotlist,
+  nrow = 2, 
+  align = "hv", 
+  axis = "bt"
+)
+```
+
+```{r, fig.width=16, fig.height=8}
+# Bootstrap to test stability
+plotlist = lapply(names(objectList), function(species) {
+    PseudoBulkPCA(SeuratBootstrap(objectList[[species]]), group.by = "annotated", title = species, scale = FALSE, min.pct.expressed = 0)
+})
+
+plot_grid(
+  plotlist = plotlist,
+  nrow = 2, 
+  align = "hv", 
+  axis = "bt"
+)
+```
+
+
+Can also filter out lowly expressed genes 
+
+```{r pca-plots, fig.width=12, fig.height=8}
+# Add cluster animal IDs
+objectList = lapply(objectList, function(object) {
+  object$cluster_id = paste0(object$annotated, '-', object$animal)
+  return(object)
+})
+
+plotlist = lapply(names(objectList), function(species) {
+    PseudoBulkPCA(objectList[[species]], group.by = "annotated", title = species, min.pct.expressed = 5)
+})
+
+plot_grid(
+  plotlist = plotlist,
+  nrow = 2, 
+  align = "hv", 
+  axis = "bt"
+)
+```
+Proof that variable gene filtration is necessary
+
+```{r, fig.height=10, fig.width=2.5}
+plot_grid(
+  PseudoBulkPCA(objectList$Zebrafish, group.by = "annotated", assay = "RNA", min.pct.expressed = 0),
+  PseudoBulkPCA(objectList$Zebrafish, group.by = "annotated", assay = "RNA", min.pct.expressed = 1),
+  PseudoBulkPCA(objectList$Zebrafish, group.by = "annotated", assay = "RNA", min.pct.expressed = 5),
+  PseudoBulkPCA(objectList$Zebrafish, group.by = "annotated", assay = "RNA", min.pct.expressed = 10),
+  nrow = 4)
+```
+
+Split by sample (note we have to exclude underrepresented types)
+
+```{r}
+PseudoBulkPCA(objectList$Zebrafish, group.by = "annotated", assay = "RNA", min.pct.expressed = 5)
+PseudoBulkPCA(objectList$Lizard, group.by = "annotated", assay = "RNA", min.pct.expressed = 10)
+PseudoBulkPCA(subset(objectList$Lizard, annotated != "rod"), group.by = "cluster_id", title = "Lizard", assay = "integrated", features = objectList$Lizard@assays$integrated@var.features)
+PseudoBulkPCA(subset(objectList$Lizard, annotated != "rod"), group.by = "cluster_id", title = "Lizard", assay = "RNA")
+```
+
+## Fig S6: PCA of all zebrafish datasets 
+
+```{r, fig.height=6, fig.width=9}
+ze_corbo = readRDS('../../Species_Objects/Cone_Objects/Zebrafish_clean_v1.rds')
+ze_dev = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR2.rds")
+ze_adult = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR_adult.rds")
+
+ze_list = list(`Corbo_adult` = ze_corbo, `Lyu_dev` = ze_dev, `Lyu_adult` = ze_adult)
+
+# ze_list = lapply(ze_list, function(object) ScaleData(object, features = rownames(object)))
+
+# plotlist = lapply(names(ze_list), function(species) {
+#     PseudoBulkPCA(ze_list[[species]], group.by = "annotated", title = species, scale = FALSE, min.pct.expressed = 0, size = 3, shape = 15, cols = pr_palette, label = TRUE) + NoLegend()
+# })
+            
+plotlist = list()
+plotlist[[1]] = PseudoBulkPCA(subset(ze_list$Corbo_adult, annotated %in% c('red', 'green', 'blue', 'UV', 'rod')), group.by = "annotated", title = 'Adult (Ogawa and Corbo 2021)', scale = FALSE, min.pct.expressed = 0, size = 3, shape = 15, cols = pr_palette, label = TRUE) + NoLegend()
+plotlist[[2]] = PseudoBulkPCA(subset(ze_list$Lyu_dev, annotated %in% c('red', 'green', 'blue', 'UV', 'rod')), group.by = "annotated", title = '4/5 dpf (Lyu et al. 2023)', scale = FALSE, min.pct.expressed = 0, size = 3, shape = 15, cols = pr_palette, label = TRUE) + NoLegend()
+plotlist[[3]] = PseudoBulkPCA(subset(ze_list$Lyu_adult, annotated %in% c('red', 'green', 'blue', 'UV', 'rod')), group.by = "annotated", title = 'Adult (Lyu et al. 2023)', scale = FALSE, min.pct.expressed = 0, size = 3, shape = 15, cols = pr_palette, label = TRUE) + NoLegend()
+
+# Save PCA
+pca.list = lapply(ze_list, function(object) PseudoBulkPCA(subset(object, annotated %in% c('red', 'green', 'blue', 'UV', 'rod')), group.by = "annotated", title = species, return.plot = FALSE, scale = FALSE, min.pct.expressed = 0))
+
+# Compare PC2 in dev and adult zebrafish
+pc_corbo = pca.list$Corbo_adult$rotation %>% as.data.frame %>% select(PC2) %>% arrange(PC2) %>% setNames('Corbo_adult')
+pc_corbo$Row.names = rownames(pc_corbo)
+pc_dev = pca.list$`Lyu_dev`$rotation %>% as.data.frame %>% select(PC2) %>% arrange(PC2) %>% setNames('Lyu_dev')
+pc_adult = pca.list$`Lyu_adult`$rotation %>% as.data.frame %>% select(PC2) %>% arrange(PC2) %>% setNames('Lyu_adult')
+
+summary.df = merge(pc_corbo, merge(pc_dev, pc_adult, by = 'row.names', all = TRUE), by = "Row.names", all = TRUE)
+
+plotlist[[6]] = ScatterPlot(summary.df, "Lyu_dev", "Lyu_adult", xlab = '4/5 dpf (Lyu)', ylab = 'Adult (Lyu)')
+plotlist[[4]] = ScatterPlot(summary.df, "Corbo_adult", "Lyu_adult", xlab = 'Adult (Corbo)', ylab = 'Adult (Lyu)')
+plotlist[[5]] = ScatterPlot(summary.df, "Corbo_adult", "Lyu_dev", xlab = 'Adult (Corbo)', ylab = '4/5 dpf (Lyu)')
+```
+
+
+```{r, fig.height=6, fig.width=9}
+pdf('figures/figS6_zebrafish_PCA.pdf', height = 6, width = 9)
+plot_grid(plotlist = plotlist,
+  ncol = 3, labels = c('a', '', '', 'b', '', ''), label_size = 20
+)
+dev.off()
+```
+
+# Heatmap
+
+```{r, fig.height=7, fig.width=18}
+markersList = list(rownames(pc_corbo), rownames(pc_dev), rownames(pc_adult))
+
+plot_grid(
+  plotlist = lapply(seq_along(ze_list), function(index){
+    DoHeatmap(DownsampleSeurat(ze_list[[index]], group.by = "annotated", size = 50), features = markersList[[index]], group.by = "annotated") + 
+      NoLegend() + 
+      scale_fill_gradientn(colors = c("blue", "white", "red")) + 
+      theme(axis.text.y = element_blank())
+    }), 
+  nrow = 1
+)
+```
+
+```{r, fig.height=8, fig.width=5}
+library(clusterProfiler)
+library(org.Dr.eg.db)
+
+# Zebrafish
+ze.genelist = rev(pc_adult$Lyu_adult)
+names(ze.genelist) = rev(rownames(pc_adult))
+
+# Cytoskeletal organization in red end and metabolism in UV end
+ego1  <- gseGO(geneList    = ze.genelist,
+              OrgDb        = org.Dr.eg.db,
+              ont          = "BP",
+              keyType      = "SYMBOL",
+              minGSSize    = 50,
+              maxGSSize    = 1000,
+              pvalueCutoff = 1,
+              verbose      = TRUE)
+
+head(ego1@result, 50)
+
+gseaplot(ego1, geneSetID = 4, by = "runningScore", title = ego1$Description[4])
+
+dotplot(mutate(ego1, log10pvalue = -log(pvalue, base=10)), color = "NES", x = "log10pvalue", showCategory=20)
+```
+
+## All species
+
+```{r}
+pca.list = lapply(names(objectList), function(species) PseudoBulkPCA(objectList[[species]], group.by = "annotated", title = species, return.plot = FALSE, nfeatures = 1000, min.pct.expressed = 10))
+
+# Extract top N contributors to PC1
+pca.list[[2]]$rotation %>% arrange(PC1) %>% select(PC1)
+```
+
+GSEA
+
+```{r, fig.height=8, fig.width=5}
+library(clusterProfiler)
+library(org.Gg.eg.db)
+
+# Zebrafish
+loadings = pca.list[[1]]$rotation %>% as.data.frame %>% arrange(-PC2)
+ze.genelist = loadings$PC2
+names(ze.genelist) = rownames(loadings)
+
+# Validate genes
+DotPlot2(objectList$Zebrafish, features = c(head(names(ze.genelist), 30), tail(names(ze.genelist), 30)), group.by = "annotated")
+
+# Chicken
+loadings = pca.list[[2]]$rotation %>% as.data.frame %>% arrange(-PC1) 
+ch.genelist = loadings$PC1
+names(ch.genelist) = rownames(loadings)
+
+# Validate genes
+DotPlot2(objectList$Chicken, features = head(names(ch.genelist), 30), group.by = "annotated") | DotPlot2(objectList$Chicken, features = tail(names(ch.genelist), 30), group.by = "annotated")
+
+# Lizard
+loadings = pca.list[[3]]$rotation %>% as.data.frame %>% arrange(-PC2)
+li.genelist = loadings$PC2
+names(li.genelist) = rownames(loadings)
+
+# Validate genes
+DotPlot2(objectList$Lizard, features = c(head(names(li.genelist), 30), tail(names(li.genelist), 30)), group.by = "annotated")
+
+# Seem to be enriched in metabolic pathways
+ego1  <- gseGO(geneList    = li.genelist,
+              OrgDb        = org.Gg.eg.db,
+              ont          = "BP",
+              keyType      = "SYMBOL",
+              minGSSize    = 50,
+              maxGSSize    = 1000,
+              pvalueCutoff = 1,
+              verbose      = TRUE)
+
+head(ego1@result, 50)
+
+gseaplot(ego1, geneSetID = 1, by = "runningScore", title = ego1$Description[2])
+
+dotplot(mutate(ego1, log10pvalue = -log(pvalue, base=10)), color = "NES", x = "log10pvalue", showCategory=20)
+```
+
+Test that GSEA works
+
+```{r}
+data(geneList, package="DOSE")
+ego3 <- gseGO(geneList     = geneList,
+              OrgDb        = org.Hs.eg.db,
+              ont          = "CC",
+              minGSSize    = 100,
+              maxGSSize    = 500,
+              pvalueCutoff = 0.05,
+              verbose      = FALSE)
+```
+
+Are PC loadings consistent between lizard and chicken? 
+
+```{r, fig.height=10, fig.width=10}
+# Convert lizard gene list to chicken
+# temp = matrix(li.genelist)
+# rownames(temp) = names(li.genelist)
+li.genelist.subset = li.genelist[names(li.genelist) %in% intersect(names(li.genelist), colnames(li2ch))]
+li.genelist.converted = as.matrix(li2ch[,match(names(li.genelist.subset), colnames(li2ch))]) %*% matrix(li.genelist.subset)
+li.genelist.converted[li.genelist.converted == 0] = NA
+
+summary.df = data.frame(gene = rownames(li2ch), 
+                        Chicken = ch.genelist[match(rownames(li2ch), names(ch.genelist))], 
+                        Lizard = li.genelist.converted)
+summary.df = na.omit(summary.df)
+
+ScatterPlot(summary.df, "Chicken", "Lizard", labels = "gene", max.overlaps = 10)
+```
+
+# Export to python (e.g. for SAMap, scANVI, etc.)
+
+## For robustness analysis
+
+Control 
+
+```{r}
+# Remove double cones for control
+types.remove = c("opn1mw4/opn1lw1", "principle", "accessory", "full", "principal") 
+
+# Writing to h5ad
+for(seed in 1:3){
+  lapply(names(objectList), function(species){ 
+    SeuratToH5ad(objectList[[species]], 
+                 filepath = paste0("../../Species_Objects/Cone_Objects/bootstrap/", species, "_single_", seed, ".h5ad"), 
+                 genes.remove = NULL, 
+                 types.remove = types.remove, 
+                 downsample = 100, 
+                 seed = seed)
+  })
+}
+
+## Lyu developing
+objectList$Zebrafish = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR2.rds")
+
+# Writing to h5ad
+dev_objects = lapply(4:6, function(seed){
+  lapply(names(objectList), function(species){ 
+    SeuratToH5ad(objectList[[species]], 
+                 filepath = paste0("../../Species_Objects/Cone_Objects/bootstrap_lyu/", species, "_single_", seed, ".h5ad"), 
+                 genes.remove = NULL, 
+                 types.remove = types.remove, 
+                 downsample = 100, 
+                 seed = seed)
+  })
+})
+
+## Lyu adult
+objectList$Zebrafish = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR_adult.rds")
+
+# Writing to h5ad
+adult_objects = lapply(7:9, function(seed){
+  lapply(names(objectList), function(species){ 
+    SeuratToH5ad(objectList[[species]], 
+                 filepath = paste0("../../Species_Objects/Cone_Objects/bootstrap_lyu_adult/", species, "_single_", seed, ".h5ad"), 
+                 genes.remove = NULL, 
+                 types.remove = types.remove, 
+                 downsample = 100, 
+                 seed = seed)
+  })
+})
+
+## Lyu adult
+objectList$Zebrafish = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR_adult2.rds")
+
+# Writing to h5ad
+adult_objects = lapply(7:9, function(seed){
+  lapply(names(objectList), function(species){ 
+    SeuratToH5ad(objectList[[species]], 
+                 filepath = paste0("../../Species_Objects/Cone_Objects/bootstrap_lyu_adult_converted/", species, "_single_", seed, ".h5ad"), 
+                 genes.remove = NULL, 
+                 types.remove = types.remove, 
+                 downsample = 100, 
+                 seed = seed)
+  })
+})
+
+```
+
+Experiment
+
+```{r}
+# Remove double cones for control
+types.remove = c("opn1mw4/opn1lw1", "full") 
+
+## Corbo
+objectList$Zebrafish = readRDS("../../Species_Objects/Cone_Objects/Zebrafish_clean_v1.rds")
+objectList$Zebrafish$animal = 'S1'
+
+# Writing to h5ad
+corbo_objects = lapply(1:3, function(seed){
+  lapply(names(objectList), function(species){ 
+    SeuratToH5ad(objectList[[species]], 
+                 filepath = paste0("../../Species_Objects/Cone_Objects/bootstrap/", species, "_double_", seed, ".h5ad"), 
+                 genes.remove = NULL, 
+                 types.remove = types.remove, 
+                 downsample = 100, 
+                 seed = seed)
+  })
+})
+
+## Lyu developing
+objectList$Zebrafish = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR2.rds")
+
+# Writing to h5ad
+dev_objects = lapply(4:6, function(seed){
+  lapply(names(objectList), function(species){ 
+    SeuratToH5ad(objectList[[species]], 
+                 filepath = paste0("../../Species_Objects/Cone_Objects/bootstrap_lyu/", species, "_double_", seed, ".h5ad"), 
+                 genes.remove = NULL, 
+                 types.remove = types.remove, 
+                 downsample = 100, 
+                 seed = seed)
+  })
+})
+
+## Lyu developing converted
+objectList$Zebrafish = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR2.rds")
+# objectList$Zebrafish@misc$converted.feature.names = rownames(ze_adult_con)
+objectList$Zebrafish = RenameFeatures(objectList$Zebrafish, new.names = objectList$Zebrafish@misc$converted.feature.names)
+
+# Writing to h5ad
+dev_objects = lapply(4:6, function(seed){
+  lapply(names(objectList), function(species){ 
+    SeuratToH5ad(objectList[[species]], 
+                 filepath = paste0("../../Species_Objects/Cone_Objects/bootstrap_lyu_converted/", species, "_double_", seed, ".h5ad"), 
+                 genes.remove = NULL, 
+                 types.remove = types.remove, 
+                 downsample = 100, 
+                 seed = seed)
+  })
+})
+
+## Lyu adult
+objectList$Zebrafish = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR_adult.rds") # V2 has the converted names which results in worse samap alignment
+
+# Writing to h5ad
+adult_objects = lapply(7:9, function(seed){
+  lapply(names(objectList), function(species){ 
+    SeuratToH5ad(objectList[[species]], 
+                 filepath = paste0("../../Species_Objects/Cone_Objects/bootstrap_lyu_adult/", species, "_double_", seed, ".h5ad"), 
+                 genes.remove = NULL, 
+                 types.remove = types.remove, 
+                 downsample = 100, 
+                 seed = seed)
+  })
+})
+
+# Writing to h5ad
+adult_objects = lapply(7:9, function(seed){
+  lapply(names(objectList), function(species){ 
+    SeuratToH5ad(objectList[[species]], 
+                 filepath = paste0("../../Species_Objects/Cone_Objects/bootstrap_lyu_adult/", species, "_all_", seed, ".h5ad"), 
+                 genes.remove = NULL, 
+                 types.remove = c('full'), 
+                 downsample = 100, 
+                 seed = seed)
+  })
+})
+
+## Lyu adult converted
+objectList$Zebrafish = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR_adult2.rds")
+
+# Writing to h5ad
+adult_objects = lapply(7:9, function(seed){
+  lapply(names(objectList), function(species){ 
+    SeuratToH5ad(objectList[[species]], 
+                 filepath = paste0("../../Species_Objects/Cone_Objects/bootstrap_lyu_adult_converted/", species, "_double_", seed, ".h5ad"), 
+                 genes.remove = NULL, 
+                 types.remove = types.remove, 
+                 downsample = 100, 
+                 seed = seed)
+  })
+})
+```
+
+# Export updated files
+
+Update: 
+* zebrafish gene names were converted to match Lyu unconverted gene names
+* opossum was realigned to NCBI and cleaned up
+* squirrel instead of rat
+
+```{r}
+# chicken = readRDS("../../Species_Objects/Cone_Objects/Chicken_clean_v3.rds")
+# lizard = readRDS("../../Species_Objects/Cone_Objects/Lizard_clean_v1.rds")
+# opossum = readRDS("../../Species_Objects/Cone_Objects/Opossum_ncbi_clean_v1.rds")
+# squirrel = readRDS("../../Species_Objects/Cone_Objects/Squirrel_clean_v1.rds")
+# human = readRDS("../../Species_Objects/Cone_Objects/Human_clean_v1.rds")
+# 
+# ## Lyu developing
+# ze_dev = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR2.rds")
+# 
+# ## Lyu adult
+# ze_adult = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR_adult.rds")
+```
+
+## With subsetting
+
+```{r}
+updatedList = list(Zebrafish = ze_dev, 
+                   ZebrafishAdult = ze_adult, 
+                   Chicken = chicken,
+                   Lizard = lizard,
+                   Opossum = opossum, 
+                   Squirrel = squirrel, 
+                   Human = human)
+
+updated_objects = lapply(10:12, function(seed){
+  lapply(names(updatedList), function(species){ 
+    SeuratToH5ad(updatedList[[species]], 
+                 filepath = paste0("../../Species_Objects/Cone_Objects/updated/", species, "_single_", seed, ".h5ad"), 
+                 genes.remove = NULL, 
+                 types.remove = c("full", "opn1mw4/opn1lw1", "principal", "accessory"), 
+                 downsample = 100, 
+                 seed = seed)
+    SeuratToH5ad(updatedList[[species]], 
+                 filepath = paste0("../../Species_Objects/Cone_Objects/updated/", species, "_double_", seed, ".h5ad"), 
+                 genes.remove = NULL, 
+                 types.remove = c("opn1mw4/opn1lw1", "full"),
+                 downsample = 100, 
+                 seed = seed)
+  })
+})
+```
+
+## Without subsetting
+
+```{r}
+updatedList = list(Zebrafish = ze_dev, 
+                   ZebrafishAdult = ze_adult, 
+                   Chicken = chicken,
+                   Lizard = lizard,
+                   Opossum = opossum, 
+                   Squirrel = squirrel, 
+                   Human = human)
+
+updatedList = lapply(updatedList, function(object){
+  object$annotated = gsub("principle", "principal", object$annotated)
+  return(object)
+})
+
+updated_objects = lapply(names(updatedList), function(species){ 
+    SeuratToH5ad(updatedList[[species]], 
+                 filepath = paste0("../../Species_Objects/Cone_Objects/updated/", species, "_single.h5ad"), 
+                 genes.remove = NULL, 
+                 types.remove = c("full", "opn1mw4/opn1lw1", "principal", "accessory"), 
+                 downsample = NULL)
+    SeuratToH5ad(updatedList[[species]], 
+                 filepath = paste0("../../Species_Objects/Cone_Objects/updated/", species, "_double.h5ad"), 
+                 genes.remove = NULL, 
+                 types.remove = c("opn1mw4/opn1lw1", "full"),
+                 downsample = NULL)
+})
+
+# updated_objects = lapply(c("Zebrafish", "ZebrafishAdult", "Squirrel", "Human"), function(species){ 
+#     SeuratToH5ad(updatedList[[species]], 
+#                  filepath = paste0("../../Species_Objects/Cone_Objects/updated/", species, "_single.h5ad"), 
+#                  genes.remove = NULL, 
+#                  types.remove = c("full", "opn1mw4/opn1lw1", "principal", "accessory"), 
+#                  downsample = NULL, 
+#                  seed = seed)
+# })
+```
+
+# Old code
+
+```{r}
+# Remove double cones for control
+types.remove = c("opn1mw4/opn1lw1", "principle", "accessory") 
+
+# Remove opsins
+genes.remove = setdiff(Genes(pr_annotation), "THRB") # Keep THRB since its not an opsin
+
+# Writing to h5ad
+lapply(names(objectList[names(objectList) %in% c("Chicken")]), function(species){ # "Zebrafish", "Opossum", "Lizard"
+  
+  # DCs removed
+  SeuratToH5ad(objectList[[species]], 
+               filepath = paste0("../../Species_Objects/Cone_Objects/", species, "_ds_v4.h5ad"), 
+               genes.remove = NULL, 
+               types.remove = types.remove, 
+               downsample = 100)
+  
+  # DCs included
+  SeuratToH5ad(objectList[[species]], 
+               filepath = paste0("../../Species_Objects/Cone_Objects/", species, "_inc_v4.h5ad"), 
+               genes.remove = NULL, 
+               types.remove = NULL, 
+               downsample = 100)
+})
+
+# Writing to h5ad
+lapply(names(objectList[names(objectList) %in% c("Rat", "Human")]), function(species){
+  
+  SeuratToH5ad(objectList[[species]], 
+               filepath = paste0("../../Species_Objects/Cone_Objects/", species, "_ds_v3.h5ad"), 
+               genes.remove = NULL, 
+               types.remove = NULL, 
+               downsample = 100)
+})
+```
+
+
+```{r}
+# Export new Lyu zebrafish data
+SeuratToH5ad(objectList$Zebrafish, 
+               filepath = paste0("../../Species_Objects/Cone_Objects/Zebrafish_ds_v4.h5ad"), 
+               genes.remove = NULL, 
+               # types.remove = types.remove, 
+               downsample = 100)
+
+# Export new Lyu zebrafish adult data
+SeuratToH5ad(objectList$Zebrafish, 
+               filepath = paste0("../../Species_Objects/Cone_Objects/Zebrafish_ds_v5.h5ad"), 
+               genes.remove = NULL, 
+               types.remove = "opn1mw4/opn1lw1",
+               downsample = 100)
+```
+
+
+```{r}
+# Export chicken v5
+objectList$Chicken = readRDS("../../Species_Objects/Cone_Objects/Chicken_clean_v3.rds")
+SeuratToH5ad(objectList$Chicken, 
+             filepath = paste0("../../Species_Objects/Cone_Objects/Chicken_ds_v5.h5ad"), 
+             genes.remove = NULL, 
+             types.remove = c("full", "principle", "accessory"),
+             downsample = 100, 
+             seed = 1)
+
+SeuratToH5ad(objectList$Chicken, 
+             filepath = paste0("../../Species_Objects/Cone_Objects/Chicken_ds_v5_2.h5ad"), 
+             genes.remove = NULL, 
+             types.remove = c("full", "principle", "accessory"),
+             downsample = 100, 
+             seed = 3)
+
+SeuratToH5ad(objectList$Chicken, 
+             filepath = paste0("../../Species_Objects/Cone_Objects/Chicken_ds_v5_3.h5ad"), 
+             genes.remove = NULL, 
+             types.remove = c("full", "principle", "accessory"),
+             downsample = 100, 
+             seed = 4)
+
+# With double cones
+SeuratToH5ad(objectList$Chicken, 
+             filepath = paste0("../../Species_Objects/Cone_Objects/Chicken_inc_v5.h5ad"), 
+             genes.remove = NULL, 
+             types.remove = c("full"),
+             downsample = 100, 
+             seed = 1)
+```
+
+```{r}
+# Zebrafish without doublets
+SeuratToH5ad(subset(objectList$Zebrafish, DF.classifications == "Singlet"), 
+               filepath = paste0("../../Species_Objects/Cone_Objects/Zebrafish_ds_v3_singlet.h5ad"), 
+               genes.remove = NULL, 
+               types.remove = types.remove, 
+               downsample = 100)
+
+# Zebrafish with SoupX-corrected counts
+SeuratToH5ad(readRDS("../../Species_Objects/Cone_Objects/Zebrafish_clean_v2_soupx.rds"), 
+               filepath = paste0("../../Species_Objects/Cone_Objects/Zebrafish_ds_v3_soupx.h5ad"), 
+               genes.remove = NULL, 
+               types.remove = types.remove, 
+               downsample = 100)
+
+# Zebrafish with blue opsin reduced
+ze_pr = objectList$Zebrafish
+ze_pr@assays$RNA@counts["opn1sw2", ze_pr$annotated != "blue"] = 0
+ze_pr@assays$RNA@counts["opn1sw1", ze_pr$annotated != "UV"] = 0
+# ze_pr@assays$RNA@data["opn1sw2", ze_pr$annotated != "blue"] = 0
+# ze_pr@assays$RNA@data["opn1sw1", ze_pr$annotated != "UV"] = 0
+AnnotatedUmap(ze_pr, pr_annotation, group.by = "annotated", color.clusters.by = "annotated")
+SeuratToH5ad(ze_pr, filepath = "../../Species_Objects/Cone_Objects/Zebrafish_blue_UV_cleaned.h5ad", genes.remove = NULL, types.remove = c("opn1mw4/opn1lw1"), downsample = 100)
+```
+
+# Checkpoint 2
+
+Save processed data
+
+```{r, eval = params$save}
+# mclapply(seq_along(objectList), function(i) SmartSaveRDS(objectList[[i]], paste0("../../Species_Objects/Cone_Objects/", names(objectList)[i], "_clean_v3.rds")), mc.cores = params$cores)
+```
+
+```{r, eval = params$stopCheckPoint2}
+# knitr::knit_exit()
+```
+
+Read in processed data
+
+```{r, eval = FALSE}
+# objectList = mclapply(metadata$speciesList, function(species) readRDS(paste0("../../Species_Objects/Cone_Objects/", species, "_clean_v3.rds")), mc.cores = params$cores)
+# names(objectList) = metadata$speciesList
+```
+
+# Difference between chicken new and chicken old
+
+```{r}
+chick.new = readRDS("../../Species_Objects/Cone_Objects/Chicken_clean_v2.rds")
+chick.old = readRDS("../../Species_Objects/Cone_Objects/Chicken_clean_v1.rds")
+
+# All gene names are the same
+length(intersect(rownames(chick.new), rownames(chick.old)))
+
+# Number of cells is the same
+nrow(chick.new) == nrow(chick.old)
+
+# Scatterplot and check differences
+chick.new.exp = AvgExpr(chick.new, features = rownames(chick.new), assay = "RNA", group.by = "annotated")
+chick.old.exp = AvgExpr(chick.old, features = rownames(chick.new), assay = "RNA", group.by = "annotated")
+
+exp.summary = cbind(reshape2::melt(as.matrix(chick.old.exp)), 
+                    reshape2::melt(as.matrix(chick.new.exp))$value) %>% setNames(c("gene", "cell", "old", "new"))
+rownames(exp.summary) = paste0(exp.summary$gene, "-", exp.summary$cell)
+ExpressionScatter(exp.summary, "old", "new", genes.to.label = c("OPN1SW-UV", "OPN1SW-red", "OPN1LW-red", "OPN1LW-UV"))
+```
+
+# Controls for swap experiment
+
+```{r}
+# # Lizard RGCs
+# lizard_full = readRDS("../../Species_Objects/Lizard_ncbi_initial.rds")
+# lizard_other = DownsampleSeurat(subset(lizard_full, seurat_clusters != 0 & cell_class %in% c("HC", "AC")), group.by = "cell_class", size = 100)
+# lizard_other$annotated = lizard_other$cell_class
+# AnnotatedDotPlot(lizard_other, major_annotation, group.by = "cell_class", color.clusters.by = "cell_class", 
+#                  features = rev(Genes(major_annotation)), color.genes = FALSE) + coord_flip() + RotatedAxis()
+# lizard_control = merge(objectList$Lizard, lizard_other)
+# SeuratToH5ad(lizard_control, 
+#                filepath = paste0("../../Species_Objects/Cone_Objects/Lizard_swap_control.h5ad"), 
+#                genes.remove = NULL, 
+#                types.remove = c("principle", "accessory"),
+#                downsample = 100)
+# 
+# # Chicken RGCs
+# chick.new = readRDS("../../Species_Objects/Chicken_initial_opn1sw.rds")
+# chick.new$cell_class = str_split_fixed(chick.new$Cluster, "-", 2)[,1]
+# chick_other = DownsampleSeurat(subset(chick.new, cell_class %in% c("HC", "AC")), group.by = "cell_class", size = 100)
+# chick_other$annotated = chick_other$cell_class
+# chick_control = merge(objectList$Chicken, chick_other)
+# AnnotatedDotPlot(chick_other, major_annotation, group.by = "cell_class", color.clusters.by = "cell_class", 
+#                  features = rev(Genes(major_annotation)), color.genes = FALSE) + coord_flip() + RotatedAxis()
+# SeuratToH5ad(chick_control, 
+#                filepath = paste0("../../Species_Objects/Cone_Objects/Chicken_swap_control.h5ad"), 
+#                genes.remove = NULL, 
+#                types.remove = c("principle", "accessory", "full"),
+#                downsample = 100)
+```
+
+```{r}
+# Lizard ACs and HCs
+set.seed(12345)
+lizard_full = readRDS("../../Species_Objects/Lizard_ncbi_initial.rds")
+
+# Subset cell class
+lizard_other = subset(lizard_full, cell_class %in% c("HC", "AC"))
+
+# Remove contamination if present
+lizard_other = Harmonize(lizard_other, batch = "animal")
+AnnotatePlot(DotPlot2(lizard_other, features = rev(Genes(major_annotation))),
+             major_annotation, color_genes_x = TRUE)
+AnnotatePlot(DotPlot2(lizard_other, features = rev(Genes(amacrine_annotation))),
+             amacrine_annotation, color_genes_x = TRUE)
+
+# Just starburst and VG3 amacrine cells
+lizard_other$annotated = AnnotateClusters(lizard_other, data.frame(old.names = c(7,20), new.names = c("SAC", "VG3")))
+
+# Downsample
+lizard_subset = DownsampleSeurat(subset(lizard_other, annotated %in% c("SAC", "VG3")), group.by = "annotated", size = 100)
+
+# Confirmation
+VlnPlot(lizard_subset, features = c("CHAT", "SLC17A8"), group.by = "annotated")
+
+lizard_control = merge(objectList$Lizard, lizard_subset)
+SeuratToH5ad(lizard_control, 
+               filepath = paste0("../../Species_Objects/Cone_Objects/Lizard_swap_control_SAC_VG3_50.h5ad"), 
+               genes.remove = NULL, 
+               types.remove = c("principle", "accessory"),
+               downsample = 50)
+
+SeuratToH5ad(objectList$Chicken, 
+               filepath = paste0("../../Species_Objects/Cone_Objects/Chicken_ds_v4_50.h5ad"), 
+               genes.remove = NULL, 
+               types.remove = c("principle", "accessory", "full"),
+               downsample = 50)
+
+SeuratToH5ad(objectList$Chicken, 
+               filepath = paste0("../../Species_Objects/Cone_Objects/Chicken_ds_v4_100.h5ad"), 
+               genes.remove = NULL, 
+               types.remove = c("principle", "accessory", "full"),
+               downsample = 100)
+
+objectList$Chicken = readRDS("../../Species_Objects/Cone_Objects/Chicken_clean_v1.rds")
+SeuratToH5ad(objectList$Chicken, 
+               filepath = paste0("../../Species_Objects/Cone_Objects/Chicken_ds_v3_100.h5ad"), 
+               genes.remove = NULL, 
+               types.remove = c("principle", "accessory", "full"),
+               downsample = 100)
+```
+
+
+```{r, fig.height=6, fig.width=15}
+# Chicken ACs and HCs
+set.seed(12345)
+chick.new = readRDS("../../Species_Objects/Chicken_initial_opn1sw.rds")
+chick.new$cell_class = str_split_fixed(chick.new$Cluster, "-", 2)[,1]
+
+# Subset cell class
+chick_other = subset(chick.new, cell_class %in% c("HC", "AC"))
+
+# Remove contamination if present
+chick_other = ClusterSeurat(chick_other, integrate.by = "orig.ident")
+AnnotatePlot(DotPlot2(chick_other, features = rev(Genes(major_annotation))),
+             major_annotation, color_genes_x = TRUE)
+# DotPlot2(chick_other, features = rev(Genes(major_annotation)), group.by = "Cluster")
+# AnnotatedDotPlot(chick_other, major_annotation, group.by = "Cluster", color.clusters.by = "cell_class",
+#                  features = rev(Genes(major_annotation)), color.genes = TRUE) + coord_flip() + RotatedAxis()
+
+# Downsample to 100 cells
+chick_other = DownsampleSeurat(chick_other, group.by = "cell_class", size = 100)
+chick_other$annotated = chick_other$cell_class
+chick_control = merge(objectList$Chicken, chick_other)
+AnnotatedDotPlot(chick_other, major_annotation, group.by = "cell_class", color.clusters.by = "cell_class", 
+                 features = rev(Genes(major_annotation)), color.genes = FALSE) + coord_flip() + RotatedAxis()
+# SeuratToH5ad(chick_control, 
+#                filepath = paste0("../../Species_Objects/Cone_Objects/Chicken_swap_control.h5ad"), 
+#                genes.remove = NULL, 
+#                types.remove = c("principle", "accessory", "full"),
+#                downsample = 100)
+```
+
+# SAMap analysis
+
+## Genes
+
+```{r}
+gene_pairs = read.csv("samap/ch_to_li_swap.csv", row.names = 1)
+PHOTORECEPTORS = sort(setNames(c('principle', 'accessory', 'red', 'green', 'blue', 'UV', 'rod'), 
+                               c('principle', 'accessory', 'red', 'green', 'blue', 'UV', 'rod')))
+species_ids = sort(setNames(c('ze', 'ch', 'li', 'op', 'rn', 'hs'), c('Zebrafish', 'Chicken', 'Lizard', 'Opossum', 'Rat', 'Human')))
+type.list1 = GetTypeList(gene_pairs, PHOTORECEPTORS, species_ids)
+
+gene_pairs = read.csv("samap/li_to_ch_swap.csv", row.names = 1)
+species_ids = sort(setNames(c('ze', 'ch', 'li', 'op', 'rn', 'hs'), c('Zebrafish', 'Chicken', 'Lizard', 'Opossum', 'Rat', 'Human')))
+type.list2 = GetTypeList(gene_pairs, PHOTORECEPTORS, species_ids)
+
+gene_pairs = read.csv("samap/ch_to_li_swap.csv", row.names = 1)
+species_ids = sort(setNames(c('ze', 'ch', 'li', 'op', 'rn', 'hs'), c('Zebrafish', 'Chicken', 'Lizard', 'Opossum', 'Rat', 'Human')))
+type.list1 = GetTypeList(gene_pairs, PHOTORECEPTORS, species_ids)
+
+gene_pairs = read.csv("samap/li_to_ch_swap.csv", row.names = 1)
+species_ids = sort(setNames(c('ze', 'ch', 'li', 'op', 'rn', 'hs'), c('Zebrafish', 'Chicken', 'Lizard', 'Opossum', 'Rat', 'Human')))
+type.list2 = GetTypeList(gene_pairs, PHOTORECEPTORS, species_ids)
+
+principal_summary = rbind(type.list1$ch$red$li$principle, 
+                          type.list2$ch$principle$li$red) %>% unique
+principal_summary$ident = paste0(principal_summary$Chicken, '-', principal_summary$Lizard)
+
+accessory_summary = rbind(type.list1$ch$red$li$accessory, 
+                          type.list2$ch$accessory$li$red) %>% unique
+accessory_summary$ident = paste0(accessory_summary$Chicken, '-', accessory_summary$Lizard)
+
+# Make unique
+intersection = intersect(principal_summary$ident, accessory_summary$ident)
+both = principal_summary[principal_summary$ident %in% intersection,]
+principal_summary = principal_summary[!principal_summary$ident %in% intersection,]
+accessory_summary = accessory_summary[!accessory_summary$ident %in% intersection,]
+
+gene_summary = rbind(accessory_summary, principal_summary, both)
+gene_summary$row_annotation = c(rep("accessory", nrow(accessory_summary)), 
+                                rep("principal", nrow(principal_summary)),
+                                rep("both", nrow(both)))
+
+# 1:1 orthologs get an asterisk
+gene_summary$one2one = apply(gene_summary, 1, function(row) {
+  if(row["Chicken"] %in% rownames(li2ch) & row["Lizard"] %in% colnames(li2ch)) {
+    li2ch[row["Chicken"], row["Lizard"]]
+  } else 0
+})
+
+png("figures/fig3_genes.png", height=5, width=7, units = 'in', res = 300)
+SAMapHeatmap(objectList, 
+             gene_summary, 
+             show_column_names = FALSE,
+             species.use = c("Chicken", "Lizard"), 
+             types.use = c("accessory", "principal", "red", "green", "blue", "UV", "rod"), 
+             show_heatmap_legend = FALSE, 
+             width = unit(4, "in"))
+dev.off()
+```
+
+## Alignment heatmaps
+
+```{r, fig.height=4.5, fig.width=6.5}
+# Control
+png('figures/fig3_control_heatmap.png', height=4.5, width=6.5, units = 'in', res = 300)
+SAMapAlignmentHeatmap(as.matrix(read.csv("samap/controlfiles4.csv", row.names = 1)))
+dev.off()
+
+# Experiment
+png('figures/fig3_exp_heatmap.png', height=4.5, width=6.5, units = 'in', res = 300)
+SAMapAlignmentHeatmap(as.matrix(read.csv("samap/expfiles4.csv", row.names = 1)))
+dev.off()
+```
+
+## Experiment: including double cones
+
+```{r ortho-gene-heatmap-exp, fig.height=30, fig.width=13}
+gene_pairs = read.csv("samap/ze_ch_li_op_rn_hs_exp_gene_pairs.csv", row.names = 1)
+PHOTORECEPTORS = setNames(c('principle', 'accessory', 'red', 'green', 'blue', 'UV', 'rod'), c('principle', 'accessory', 'red', 'green', 'blue', 'UV', 'rod'))
+species_ids = sort(setNames(c('ze', 'ch', 'li', 'op', 'rn', 'hs'), c('Zebrafish', 'Chicken', 'Lizard', 'Opossum', 'Rat', 'Human')))
+
+gene.summary = lapply(PHOTORECEPTORS, function(type) {
+  type.list = list()
+  element = 1
+  for(i in 1:(length(species_ids)-1)){
+    for(j in (i+1):length(species_ids)){
+      column.name = paste0(species_ids[i], "_", type, ".", species_ids[j], "_", type)
+      genes.1 = ExtractString(gene_pairs[[column.name]], paste0(species_ids[i], "_"), ";")
+      genes.1 = genes.1[genes.1 != ""]
+      genes.2 = ExtractString(gene_pairs[[column.name]], paste0(species_ids[j], "_"))
+      genes.2 = genes.2[genes.2 != ""]
+      type.list[[element]] = setNames(data.frame(genes.1, genes.2), names(species_ids)[c(i,j)])
+      element = element + 1
+    }
+  }
+  return(type.list)
+})
+
+top.ortho.markers = lapply(PHOTORECEPTORS, function(type){
+  gene.summary[[type]][1:5] %>% 
+    Reduce(function(dtf1,dtf2) full_join(dtf1, dtf2, by="Chicken"), .)
+})
+
+SAMapHeatmap(objectList, 
+             do.call(rbind, top.ortho.markers) %>% unique, 
+             species.use = c("Zebrafish", "Chicken", "Lizard", "Opossum", "Rat", "Human"), #names(species_ids), 
+             types.use = c("principle", "accessory", "red", "green", "blue", "UV", "rod"), 
+             show_heatmap_legend = FALSE, 
+             width = unit(4, "in"))
+```
+
+
+```{r, fig.height=30, fig.width=13}
+gene_pairs = read.csv("samap/ze_ch_li_op_rn_hs_exp_gene_pairs.csv", row.names = 1)
+PHOTORECEPTORS = sort(setNames(c('principle', 'accessory', 'red', 'green', 'blue', 'UV', 'rod'), c('principle', 'accessory', 'red', 'green', 'blue', 'UV', 'rod')))
+species_ids = sort(setNames(c('ze', 'ch', 'li', 'op', 'rn', 'hs'), c('Zebrafish', 'Chicken', 'Lizard', 'Opossum', 'Rat', 'Human')))
+
+# gene.summary = list()
+type.list = list()
+
+# This recovers all 335 entries
+for(i in 1:(length(species_ids)-1)){
+  type.list[[ species_ids[i] ]] = list()
+  for(k in 1:(length(PHOTORECEPTORS))){
+    type.list[[ species_ids[i] ]][[ PHOTORECEPTORS[k] ]] = list()
+    for(j in (i+1):length(species_ids)){
+      type.list[[ species_ids[i] ]][[ PHOTORECEPTORS[k] ]][[ species_ids[j] ]] = list()
+      for(l in (1):length(PHOTORECEPTORS)){
+        # element = 1
+        column.name = paste0(species_ids[i], "_", PHOTORECEPTORS[k], ".", species_ids[j], "_", PHOTORECEPTORS[l])
+        if(column.name %in% names(gene_pairs)){
+          genes.1 = ExtractString(gene_pairs[[column.name]], paste0(species_ids[i], "_"), ";")
+          genes.1 = genes.1[genes.1 != ""]
+          genes.2 = ExtractString(gene_pairs[[column.name]], paste0(species_ids[j], "_"))
+          genes.2 = genes.2[genes.2 != ""]
+          type.list[[ species_ids[i] ]][[ PHOTORECEPTORS[k] ]][[ species_ids[j] ]][[ PHOTORECEPTORS[l] ]] = setNames(data.frame(genes.1, genes.2), names(species_ids)[c(i,j)])
+          # element = element + 1
+        }
+      }
+    }
+  }
+}
+
+top.ortho.markers = lapply(c("red", "green", "blue", "UV", "rod", "accessory", "principle"), function(type){
+  # ref_indices = which(lapply(type.list[[type]], function(x) "Chicken" %in% colnames(x)) %>% unlist)
+  df.list = lapply(c("ze", "li", "op", "rn", "hs"), function(species) type.list[["ch"]][[type]][[species]][[type]]) 
+  df.list = df.list[lengths(df.list) != 0]
+  df.list %>% Reduce(function(dtf1, dtf2) full_join(dtf1, dtf2, by="Chicken"), .)
+})
+
+SAMapHeatmap(objectList, 
+             do.call(plyr::rbind.fill, top.ortho.markers) %>% unique, 
+             species.use = c("Zebrafish", "Chicken", "Lizard", "Opossum", "Rat", "Human"), 
+             types.use = c("principle", "accessory", "red", "green", "blue", "UV", "rod"), 
+             show_heatmap_legend = FALSE, 
+             width = unit(4, "in"))
+```
+
+## Accessory similarity to red cones of other species
+
+```{r, fig.height=15, fig.width=13}
+gene_pairs = read.csv("samap/ze_ch_li_op_rn_hs_exp_gene_pairs.csv", row.names = 1)
+PHOTORECEPTORS = setNames(c('principle', 'accessory', 'red', 'green', 'blue', 'UV', 'rod'), c('principle', 'accessory', 'red', 'green', 'blue', 'UV', 'rod'))
+species_ids = sort(setNames(c('ze', 'ch', 'li', 'op', 'rn', 'hs'), c('Zebrafish', 'Chicken', 'Lizard', 'Opossum', 'Rat', 'Human')))
+
+gene.summary = lapply(PHOTORECEPTORS, function(type) {
+  type.list = list()
+  element = 1
+  for(i in 1:(length(species_ids)-1)){
+    for(j in (i+1):length(species_ids)){
+      column.name = paste0(species_ids[i], "_", type, ".", species_ids[j], "_red")
+      genes.1 = ExtractString(gene_pairs[[column.name]], paste0(species_ids[i], "_"), ";")
+      genes.1 = genes.1[genes.1 != ""]
+      genes.2 = ExtractString(gene_pairs[[column.name]], paste0(species_ids[j], "_"))
+      genes.2 = genes.2[genes.2 != ""]
+      type.list[[element]] = setNames(data.frame(genes.1, genes.2), names(species_ids)[c(i,j)])
+      element = element + 1
+    }
+  }
+  return(type.list)
+})
+
+# Try a different reference species
+top.ortho.markers = lapply(PHOTORECEPTORS, function(type){
+  ref_indices = which(lapply(gene.summary[[type]], function(x) "Chicken" %in% colnames(x)) %>% unlist)
+  gene.summary[[type]][ref_indices] %>%
+    Reduce(function(dtf1,dtf2) full_join(dtf1, dtf2, by="Chicken"), .)
+})
+
+SAMapHeatmap(objectList, 
+             top.ortho.markers$accessory %>% unique, 
+             species.use = c("Zebrafish", "Chicken", "Lizard", "Opossum", "Rat", "Human"), #names(species_ids), 
+             types.use = c("principle", "accessory", "red", "green", "blue", "UV", "rod"), 
+             show_heatmap_legend = TRUE, 
+             width = unit(4, "in"))
+
+# SAMapHeatmap(objectList, 
+#              top.ortho.markers$principle %>% unique, 
+#              species.use = c("Zebrafish", "Chicken", "Lizard", "Opossum", "Rat", "Human"), #names(species_ids), 
+#              types.use = c("principle", "accessory", "red", "green", "blue", "UV", "rod"), 
+#              show_heatmap_legend = TRUE, 
+#              width = unit(4, "in"))
+```
+
+Consistent results with previous method 
+
+```{r, fig.height=12, fig.width=13}
+df.list = lapply(c("ze", "li", "op", "rn", "hs"), function(species) type.list[["ch"]][["accessory"]][[species]][["red"]]) 
+df.list = df.list[lengths(df.list) != 0] %>% 
+  Reduce(function(dtf1, dtf2) full_join(dtf1, dtf2, by="Chicken"), .)
+
+SAMapHeatmap(objectList,
+             df.list,
+             species.use = c("Zebrafish", "Chicken", "Lizard", "Opossum", "Rat", "Human"),
+             types.use = c("principle", "accessory", "red", "green", "blue", "UV", "rod"),
+             show_heatmap_legend = FALSE,
+             width = unit(4, "in"))
+```
+
+## Accessory similarity to principle member
+
+```{r, fig.height=5, fig.width=13}
+df.list = lapply(c("ze", "li", "op", "rn", "hs"), function(species) type.list[["ch"]][["accessory"]][[species]][["principle"]]) 
+df.list = df.list[lengths(df.list) != 0] %>% 
+  Reduce(function(dtf1, dtf2) full_join(dtf1, dtf2, by="Chicken"), .)
+
+SAMapHeatmap(objectList,
+             df.list,
+             species.use = c("Chicken", "Lizard", "Opossum"),
+             types.use = c("principle", "accessory", "red", "green", "blue", "UV", "rod"),
+             show_heatmap_legend = FALSE,
+             width = unit(4, "in"))
+```
+
+## Principle similarity to red
+
+```{r, fig.height=6, fig.width=13}
+df.list = lapply(c("ze", "li", "op", "rn", "hs"), function(species) type.list[["ch"]][["principle"]][[species]][["red"]]) 
+df.list = df.list[lengths(df.list) != 0] %>% 
+  Reduce(function(dtf1, dtf2) full_join(dtf1, dtf2, by="Chicken"), .)
+
+SAMapHeatmap(objectList,
+             df.list,
+             species.use = c("Zebrafish", "Chicken", "Lizard", "Opossum", "Rat", "Human"),
+             types.use = c("principle", "accessory", "red", "green", "blue", "UV", "rod"),
+             show_heatmap_legend = FALSE,
+             width = unit(4, "in"))
+```
+
+# Accessory similarity to blue cone
+
+```{r, fig.height=5, fig.width=13}
+df.list = lapply(c("ze", "li", "op", "rn", "hs"), function(species) type.list[["ch"]][["accessory"]][[species]][["blue"]]) 
+df.list = df.list[lengths(df.list) != 0] %>% 
+  Reduce(function(dtf1, dtf2) full_join(dtf1, dtf2, by="Chicken"), .)
+
+SAMapHeatmap(objectList,
+             df.list,
+             species.use = c("Zebrafish", "Chicken", "Lizard"),
+             types.use = c("principle", "accessory", "red", "green", "blue", "UV", "rod"),
+             show_heatmap_legend = FALSE,
+             width = unit(4, "in"))
+```
+
+# Accessory similarity to green cone
+
+```{r, fig.height=12, fig.width=13}
+df.list = lapply(c("ze", "li", "op", "rn", "hs"), function(species) type.list[["ch"]][["accessory"]][[species]][["green"]]) 
+df.list = df.list[lengths(df.list) != 0] %>% 
+  Reduce(function(dtf1, dtf2) full_join(dtf1, dtf2, by="Chicken"), .)
+
+SAMapHeatmap(objectList,
+             df.list,
+             species.use = c("Zebrafish", "Chicken", "Lizard"),
+             types.use = c("principle", "accessory", "red", "green", "blue", "UV", "rod"),
+             show_heatmap_legend = FALSE,
+             width = unit(4, "in"))
+```
+
+Using Seurat DotPlot
+
+```{r}
+# Idents(objectList$Chicken) = "annotated"
+dotplot.ch = DotPlot2(objectList$Chicken, group.by = "annotated", features = unique(gene.summary$red$chicken.genes))
+dotplot.ze = DotPlot2(objectList$Zebrafish, group.by = "annotated", features = unique(gene.summary$red$zebrafish.genes))
+
+dotplot.ch$data$id = paste0("ch_", dotplot.ch$data$id)
+dotplot.ze$data$id = paste0("ze_", dotplot.ze$data$id)
+
+dotplot.ch$data$features.plot = make.unique(dotplot.ch$data$features.plot[match(gene.summary$red$chicken.genes, rownames(scaled.expr)),])
+
+DarPlot(rbind(dotplot.ch$data, dotplot.ze$data))
+```
+
+Generating homology tables
+
+```{r}
+library(igraph)
+
+ze2ch = BlastOrthologyTable(file1 = "maps_old3/zech/ch_to_ze.txt", 
+                            file2 = "maps_old3/zech/ze_to_ch.txt", 
+                            keyfile1 = "Keys/Chicken_key.csv",
+                            keyfile2 = "Keys/Zebrafish_key_old.csv")
+
+# Zebrafish ensembl
+# ze2ch = BlastOrthologyTable(file1 = "maps/zech/ch_to_ze.txt", 
+#                             file2 = "maps/zech/ze_to_ch.txt", 
+#                             keyfile1 = "Keys/Chicken_key.csv",
+#                             keyfile2 = "Keys/Zebrafish_key.csv")
+
+li2ch = BlastOrthologyTable(file1 = "maps_old3/chli/ch_to_li.txt", 
+                            file2 = "maps_old3/chli/li_to_ch.txt", 
+                            keyfile1 = "Keys/Chicken_key.csv",
+                            keyfile2 = "Keys/Lizard_key.csv")
+
+
+# edge.1 <- setNames(as.data.frame(get.edgelist(graph_from_incidence_matrix(ze2ch))), c("Chicken", "Zebrafish"))
+# edge.2 <- setNames(as.data.frame(get.edgelist(graph_from_incidence_matrix(li2ch))), c("Chicken", "Lizard"))
+# 
+# ortholog.table = SmartMerge(list(edge.1, edge.2), by = "Chicken")
+
+op2ch = BlastOrthologyTable(file1 = "maps_old3/chop/ch_to_op.txt",
+                            file2 = "maps_old3/chop/op_to_ch.txt",
+                            keyfile1 = "Keys/Chicken_key.csv",
+                            keyfile2 = "Keys/Opossum_key.csv", 
+                            one2one = FALSE)
+```
+
+```{r, fig.height=10}
+# Best rod genes sorted by frequency (using chicken as reference)
+top.ortho.markers = lapply(PHOTORECEPTORS, function(type){
+  genes.rank = unlist(sapply(gene.summary[[type]], function(x) unique(x$Chicken))) %>% table %>% sort %>% rev
+  genes.use = names(genes.rank[genes.rank > 1])
+  genes.use[genes.use %in% ortholog.table$Chicken]
+}) 
+
+SAMapHeatmap(objectList, 
+             ortholog.table[match(unlist(top.ortho.markers), ortholog.table$Chicken),], 
+             species.use = c("Chicken", "Zebrafish", "Lizard"), 
+             types.use = c("red", "green", "blue", "UV", "rod"))#, "accessory", "principle"))
+
+# SAMapHeatmap(objectList, 
+#              ortholog.table[ortholog.table$Chicken %in% gene.summary$rod[[5]]$Chicken,], 
+#              species.use = c("Chicken", "Zebrafish", "Lizard"))
+```
+
+Naive DE test and pick orthologs
+
+```{r}
+markersList = lapply(objectList, function(object) TopNDEGs(DownsampleSeurat(object, group.by = "annotated", size = 100), group.by = "annotated", n = 100))
+```
+
+# Linear combination analysis
+
+```{r}
+# library(reticulate)
+# np <- import("numpy")
+# 
+# npz1 <- np$load("GRAPH/ch_li.npz")
+# npz1$files
+# npz1$f[["arr_0"]]
+# npz1$f[["arr_1"]]
+```
+
+# Testing if seurat with blast orthology works
+
+## Chicken and lizard succeeds
+
+```{r, fig.height=3, fig.width=8}
+ortho = OrthotypeAnalysis2(objectList$Chicken, 
+                           objectList[c("Lizard")], list(li2ch), 
+                           downsample = 100, 
+                           types.use = c("red", "green", "blue", "UV", "rod"))
+DimPlot(ortho, group.by = "species") | DimPlot(ortho, label = TRUE) + NoLegend() | DimPlot(ortho, group.by = "annotated", label = TRUE) + NoLegend()
+OrthotypeHeatmaps2(ortho)
+```
+
+Using lizard as reference
+
+```{r, fig.height=3, fig.width=8}
+ortho = OrthotypeAnalysis2(objectList$Lizard, 
+                           objectList[c("Chicken")], list(t(li2ch)), 
+                           downsample = 100, 
+                           types.use = c("red", "green", "blue", "UV", "rod"))
+DimPlot(ortho, group.by = "species") | DimPlot(ortho, label = TRUE) + NoLegend() | DimPlot(ortho, group.by = "annotated", label = TRUE) + NoLegend()
+OrthotypeHeatmaps2(ortho)
+```
+
+With 200 cells
+
+```{r, fig.height=3, fig.width=8}
+ortho = OrthotypeAnalysis2(objectList$Chicken, 
+                           objectList[c("Lizard")], list(li2ch), 
+                           downsample = 200, 
+                           types.use = c("red", "green", "blue", "UV", "rod", "principle", "accessory"))
+DimPlot(ortho, group.by = "species") | DimPlot(ortho, label = TRUE) + NoLegend() | DimPlot(ortho, group.by = "annotated", label = TRUE) + NoLegend()
+OrthotypeHeatmaps2(ortho)
+```
+
+## Chicken, lizard, and zebrafish works
+
+```{r, fig.height=4, fig.width=12}
+ortho = OrthotypeAnalysis2(objectList$Chicken, 
+                           objectList[c("Zebrafish", "Lizard")], list(ze2ch, li2ch), 
+                           downsample = 100, 
+                           types.use = c("red", "green", "blue", "UV", "rod"))
+theme_umap(DimPlot(ortho, group.by = "species", shuffle = TRUE)) | theme_umap(DimPlot(ortho, group.by = "annotated", label = TRUE, shuffle = TRUE) + NoLegend()) | theme_umap(DimPlot(ortho, group.by = "seurat_clusters", label = TRUE, shuffle = TRUE) + NoLegend())
+OrthotypeHeatmaps2(ortho)
+```
+
+Naively with RNA assay
+
+```{r, fig.height = 6, fig.width= 6}
+ortho$species_annotated = paste0(substr(ortho$species, 0, 2), "_", ortho$annotated)
+PseudoBulkPCA(ortho, group.by = "species_annotated", title = "RNA assay", min.pct.expressed = 5, axes = c(3,4)) 
+```
+
+With integrated assay
+
+```{r, fig.height=6, fig.width=6}
+ortho$species_annotated = paste0(substr(ortho$species, 0, 2), "_", ortho$annotated)
+PseudoBulkPCA(ortho, group.by = "species_annotated", title = "integrated assay", min.pct.expressed = 10, assay = "integrated", axes = c(3,4)) #features = ortho@assays$integrated@var.features)
+```
+
+With principle and accessory
+
+```{r, fig.height=3, fig.width=8}
+ortho = OrthotypeAnalysis2(objectList$Chicken, 
+                           objectList[c("Zebrafish", "Lizard")], list(ze2ch, li2ch), 
+                           downsample = 100, 
+                           types.use = c("red", "green", "blue", "UV", "rod", "principle", "accessory"), 
+                           cluster_resolution = 0.5)
+
+theme_umap(DimPlot(ortho, group.by = "species", shuffle = TRUE)) | theme_umap(DimPlot(ortho, group.by = "annotated", label = TRUE, shuffle = TRUE) + NoLegend())
+#DimPlot(ortho, group.by = "species") | DimPlot(ortho, label = TRUE) + NoLegend() | DimPlot(ortho, group.by = "annotated", label = TRUE) + NoLegend()
+OrthotypeHeatmaps2(ortho)
+```
+
+```{r}
+CorrelationHeatmap(ortho, assay = "integrated", group.by = "annotated") #, features = ortho@assays$integrated@var.features)
+```
+
+Reveals incomplete integration
+
+```{r}
+ortho$annotated_species = factor(paste0(ortho$annotated, "_", substr(ortho$species, 0, 2)),
+                                 levels = sort(unique(paste0(ortho$annotated, "_", substr(ortho$species, 0, 2)))))
+
+CorrelationHeatmap(ortho, assay = "RNA", group.by = "annotated_species")
+CorrelationHeatmap(ortho, assay = "integrated", group.by = "annotated_species", features = ortho@assays$integrated@var.features)
+CorrelationHeatmap(ortho, assay = "RNA", group.by = "annotated_species", cluster_rows = FALSE)
+CorrelationHeatmap(ortho, assay = "integrated", group.by = "annotated_species", features = ortho@assays$integrated@var.features, cluster_rows = FALSE)
+```
+
+## Attempt with harmony
+
+```{r}
+ortho = Harmonize(ortho, batch = "species")
+DimPlot(ortho, group.by = "species") | DimPlot(ortho, label = TRUE) + NoLegend() | DimPlot(ortho, group.by = "annotated", label = TRUE) + NoLegend()
+OrthotypeHeatmaps2(ortho)
+```
+
+Top DEGs
+
+```{r}
+de_table = wilcoxauc(ortho, group_by = "annotated")
+# nDEGs(de_table, up = TRUE, down = FALSE, presto = TRUE)
+# cone_vs_cone = FindAllMarkers(subset(objectList$Chicken, annotated %in% c("GreenCones", "RedCones", "VioletCones", "BlueCones")))
+de_table %>%
+    group_by(group) %>%
+    dplyr::filter(logFC > 0.5) %>%
+    arrange(-logFC) %>% 
+    slice_head(n = 10) %>%
+    ungroup() -> top
+```
+
+
+```{r, fig.height=15, fig.width=10}
+plot_grid(
+  StackedPlots(lapply(subset(top, group == "UV")$feature, function(gene) geneDotPlot(ortho, gene, group.by = "annotated")),
+  height = 1.1, remove.titles = FALSE, no.legend = TRUE), 
+  StackedPlots(lapply(subset(top, group == "accessory")$feature, function(gene) geneDotPlot(ortho, gene, group.by = "annotated")),
+  height = 1.1, remove.titles = FALSE, no.legend = TRUE),
+  StackedPlots(lapply(subset(top, group == "red")$feature, function(gene) geneDotPlot(ortho, gene, group.by = "annotated")),
+  height = 1.1, remove.titles = FALSE, no.legend = TRUE),
+  nrow = 1
+)
+```
+
+## Opossum, human, and rat works
+
+```{r}
+op2hs = BlastOrthologyTable(file1 = "maps/ophs/hs_to_op.txt", 
+                            file2 = "maps/ophs/op_to_hs.txt", 
+                            keyfile1 = "Keys/Human_key.csv",
+                            keyfile2 = "Keys/Opossum_key.csv")
+
+rn2hs = BlastOrthologyTable(file1 = "maps/rnhs/hs_to_rn.txt", 
+                            file2 = "maps/rnhs/rn_to_hs.txt", 
+                            keyfile1 = "Keys/Human_key.csv",
+                            keyfile2 = "Keys/Rat_key.csv")
+colnames(rn2hs) = toupper(colnames(rn2hs))
+objectList$Human$species = "Human"
+objectList$Rat$species = "Rat"
+```
+
+```{r, fig.height=3, fig.width=8}
+ortho = OrthotypeAnalysis2(objectList$Human, 
+                           objectList[c("Rat", "Opossum")], list(rn2hs, op2hs), 
+                           downsample = 100, 
+                           types.use = c("red", "green", "blue", "UV", "rod"), 
+                           cluster_resolution = 0.5)
+DimPlot(ortho, group.by = "species") | DimPlot(ortho, label = TRUE) + NoLegend() | DimPlot(ortho, group.by = "annotated", label = TRUE) + NoLegend()
+OrthotypeHeatmaps2(ortho)
+```
+
+```{r, fig.height=3, fig.width=8}
+ortho = OrthotypeAnalysis2(objectList$Human, 
+                           objectList[c("Rat", "Opossum")], list(rn2hs, op2hs), 
+                           downsample = 100, 
+                           types.use = c("red", "green", "blue", "UV", "rod", "principle", "accessory"), 
+                           cluster_resolution = 0.5)
+DimPlot(ortho, group.by = "species") | DimPlot(ortho, label = TRUE) + NoLegend() | DimPlot(ortho, group.by = "annotated", label = TRUE) + NoLegend()
+OrthotypeHeatmaps2(ortho)
+```
+
+## With zebrafish as reference 
+
+```{r}
+li2ze = BlastOrthologyTable(file1 = "maps/zeli/ze_to_li.txt", 
+                            file2 = "maps/zeli/li_to_ze.txt", 
+                            keyfile1 = "Keys/Zebrafish_key.csv",
+                            keyfile2 = "Keys/Lizard_key.csv")
+```
+
+```{r, fig.height=3, fig.width=8}
+ortho = OrthotypeAnalysis2(objectList$Zebrafish, 
+                           objectList[c("Chicken", "Lizard")], list(t(ze2ch), li2ze), 
+                           downsample = 100, 
+                           types.use = c("red", "green", "blue", "UV", "rod"))
+DimPlot(ortho, group.by = "species") | DimPlot(ortho, label = TRUE) + NoLegend() | DimPlot(ortho, group.by = "annotated", label = TRUE) + NoLegend()
+OrthotypeHeatmaps2(ortho)
+```
+
+
+```{r, fig.height=3, fig.width=8}
+ortho = OrthotypeAnalysis2(objectList$Zebrafish, 
+                           objectList[c("Chicken", "Lizard")], list(t(ze2ch), li2ze), 
+                           downsample = 100, 
+                           types.use = c("red", "green", "blue", "UV", "rod", "principle", "accessory"))
+DimPlot(ortho, group.by = "species") | DimPlot(ortho, label = TRUE) + NoLegend() | DimPlot(ortho, group.by = "annotated", label = TRUE) + NoLegend()
+OrthotypeHeatmaps2(ortho)
+```
+
+## Chicken and opossum fails
+
+```{r, fig.height=3, fig.width=8}
+ortho = OrthotypeAnalysis2(objectList$Chicken, 
+                           objectList[c("Opossum")], list(op2ch), 
+                           downsample = 100, 
+                           types.use = c("red", "green", "blue", "UV", "rod", "principle", "accessory"))
+DimPlot(ortho, group.by = "species") | DimPlot(ortho, label = TRUE) + NoLegend() | DimPlot(ortho, group.by = "annotated", label = TRUE) + NoLegend()
+OrthotypeHeatmaps2(ortho)
+```
+
+## Lizard and opossum fails
+
+```{r, fig.height=3, fig.width=8}
+op2li = BlastOrthologyTable(file1 = "maps/liop/li_to_op.txt", 
+                            file2 = "maps/liop/op_to_li.txt", 
+                            keyfile1 = "Keys/Lizard_key.csv",
+                            keyfile2 = "Keys/Opossum_key.csv")
+```
+
+
+```{r, fig.height=3, fig.width=8}
+ortho = OrthotypeAnalysis2(objectList$Lizard, 
+                           objectList[c("Opossum")], list(op2li), 
+                           downsample = 100, 
+                           types.use = c("red", "green", "blue", "UV", "rod"))
+DimPlot(ortho, group.by = "species") | DimPlot(ortho, label = TRUE) + NoLegend() | DimPlot(ortho, group.by = "annotated", label = TRUE) + NoLegend()
+OrthotypeHeatmaps2(ortho)
+```
+
+## Including opossum leads to mixing cones
+
+```{r, fig.height=4, fig.width=10}
+ortho = OrthotypeAnalysis2(objectList$Chicken, 
+                           objectList[c("Zebrafish", "Lizard", "Opossum")], list(ze2ch, li2ch, op2ch), 
+                           downsample = 100, 
+                           types.use = c("red", "green", "blue", "UV", "rod"), 
+                           cluster_resolution = 0.5)
+theme_umap(DimPlot(ortho, group.by = "species", shuffle = TRUE)) | theme_umap(DimPlot(ortho, group.by = "annotated", label = TRUE, shuffle = TRUE) + NoLegend())
+OrthotypeHeatmaps2(ortho)
+```
+
+```{r}
+getwd()
+```
+
+## Including all species fails
+
+```{r, eval = FALSE}
+ze2ch = BlastOrthologyTable(file1 = "maps_from_blast_v4/zech/ch_to_ze.txt", 
+                            file2 = "maps_from_blast_v4/zech/ze_to_ch.txt", 
+                            keyfile1 = "Keys/Chicken_key.csv",
+                            keyfile2 = "Keys/Zebrafish_lyu_key.csv")
+
+li2ch = BlastOrthologyTable(file1 = "maps_from_blast_v4/chli/ch_to_li.txt", 
+                            file2 = "maps_from_blast_v4/chli/li_to_ch.txt", 
+                            keyfile1 = "Keys/Chicken_key.csv",
+                            keyfile2 = "Keys/Lizard_key.csv")
+
+op2ch = BlastOrthologyTable(file1 = "maps_from_blast_v4/chop/ch_to_op.txt",
+                            file2 = "maps_from_blast_v4/chop/op_to_ch.txt",
+                            keyfile1 = "Keys/Chicken_key.csv",
+                            keyfile2 = "Keys/Opossum_mMonDom1_key.csv",
+                            one2one = TRUE)
+
+sq2ch = BlastOrthologyTable(file1 = "maps_from_blast_v4/chsq/ch_to_sq.txt",
+                            file2 = "maps_from_blast_v4/chsq/sq_to_ch.txt",
+                            keyfile1 = "Keys/Chicken_key.csv",
+                            keyfile2 = "Keys/Squirrel_key.csv", 
+                            one2one = TRUE)
+
+hs2ch = BlastOrthologyTable(file1 = "/clusterfs/kslab/Evolution/BLAST_HOMOLOGY/maps_pmNCBI_zeENS_chNCBI_liNCBI_opENS_sqENS_hsENS/chhs/ch_to_hs.txt",
+                            file2 = "/clusterfs/kslab/Evolution/BLAST_HOMOLOGY/maps_pmNCBI_zeENS_chNCBI_liNCBI_opENS_sqENS_hsENS/chhs/ch_to_hs.txt",
+                            keyfile1 = "Keys/Chicken_key.csv",
+                            keyfile2 = "Keys/Human_key.csv", 
+                            one2one = TRUE)
+
+
+ze2ch = as(ze2ch, "sparseMatrix")
+li2ch = as(li2ch, "sparseMatrix")
+op2ch = as(op2ch, "sparseMatrix")
+sq2ch = as(sq2ch, "sparseMatrix")
+hs2ch = as(hs2ch, "sparseMatrix")
+
+dir.create("orthology_graphs")
+saveRDS(ze2ch, "orthology_graphs/ze2ch.rds")
+saveRDS(li2ch, "orthology_graphs/li2ch.rds")
+saveRDS(op2ch, "orthology_graphs/op2ch.rds")
+saveRDS(sq2ch, "orthology_graphs/sq2ch.rds")
+saveRDS(hs2ch, "orthology_graphs/hs2ch.rds")
+```
+
+Ancestral
+
+```{r, fig.height=4, fig.width=9}
+ze2ch = readRDS("orthology_graphs/ze2ch.rds")
+li2ch = readRDS("orthology_graphs/li2ch.rds")
+op2ch = readRDS("orthology_graphs/op2ch.rds")
+sq2ch = readRDS("orthology_graphs/sq2ch.rds")
+hs2ch = readRDS("orthology_graphs/hs2ch.rds")
+
+# Downsample to the same set of cells used for SAMap UMAP and cLISI computation
+cells.use = sapply(fread('MappingTable/zechlisqhs_single_res_0_leiden_v2.csv', header = TRUE)$V1, function(x) substr(x, 1, nchar(x) - 2), USE.NAMES = FALSE)
+
+dsObjectList = lapply(objectList[-4], function(object) object[,Cells(object) %in% cells.use])
+ortho = OrthotypeAnalysis2(dsObjectList$Chicken, 
+                           dsObjectList[c("Zebrafish", "Lizard", "Squirrel", "Human")], 
+                           list(ze2ch, li2ch, sq2ch, hs2ch), 
+                           downsample = 100, 
+                           types.use = c("red", "green", "blue", "UV", "rod"), 
+                           cluster_resolution = 0.5)
+ortho$species = factor(ortho$species, levels = c("Zebrafish", "Chicken", "Lizard", "Squirrel", "Human"))
+saveRDS(ortho, "../../Species_Objects/Cone_Objects/zechlisqhs_seurat_v2.rds")
+```
+
+
+```{r, fig.height=4, fig.width=9}
+ortho = readRDS("../../Species_Objects/Cone_Objects/zechlisqhs_seurat.rds")
+
+seurat_umaps = plot_grid(
+  TitlePlot(PrettyUmap2(ortho, group.by = "species", cols = species_palette, label = FALSE, show.legend = TRUE, angle = pi), title = 'By species'), 
+  TitlePlot(PrettyUmap2(ortho, group.by = "annotated", label = FALSE, show.legend = TRUE, shuffle = TRUE, angle = pi, cols = pr_palette), title = 'By cell type'),
+  labels = c('a'), label_size = 20)
+
+seurat_umaps
+```
+
+# Figure 2
+
+## SAMap alignment matrix
+
+```{r, fig.height=6, fig.width=8}
+pdf('figures/fig2_alignment.pdf', height = 5, width = 7)
+SAMapAlignmentHeatmap(MedianTable("MappingTable/zechlisqhs_single"), 
+                      cols = c("white", "#fbd9d3", "#ffb09c", "red", "darkred"), 
+                      show_heatmap_legend = TRUE)
+dev.off()
+```
+
+## Genes from SAMap
+
+```{r, fig.height=25, fig.width=13}
+# gene_pairs = read.csv("samap/ze_ch_li_op_rn_hs_gene_pairs.csv", row.names = 1)
+# gene_pairs = read.csv("samap/controlfiles4_gp.csv", row.names = 1)
+gene_pairs = read.csv("MappingTable/zechlisqhs_genepairs.csv", row.names = 1)
+# chicken.genes = ExtractString(gene_pairs$ch_UV.ze_UV, "ch_", ";")
+# zebrafish.genes = ExtractString(gene_pairs$ch_UV.ze_UV, "ze_")
+PHOTORECEPTORS = setNames(c('red', 'green', 'blue', 'UV', 'rod'), 
+                          c('red', 'green', 'blue', 'UV', 'rod'))
+species_ids = sort(setNames(c('ze', 'ch', 'li', 'sq', 'hs'), 
+                            c('Zebrafish', 'Chicken', 'Lizard', 'Squirrel', 'Human')))
+
+gene.summary = lapply(PHOTORECEPTORS, function(type) {
+  type.list = list()
+  element = 1
+  for(i in 1:(length(species_ids)-1)){
+    for(j in (i+1):length(species_ids)){
+      column.name = paste0(species_ids[i], "_", type, ".", species_ids[j], "_", type)
+      genes.1 = ExtractString(gene_pairs[[column.name]], paste0(species_ids[i], "_"), ";")
+      genes.1 = genes.1[genes.1 != ""]
+      genes.2 = ExtractString(gene_pairs[[column.name]], paste0(species_ids[j], "_"))
+      genes.2 = genes.2[genes.2 != ""]
+      type.list[[element]] = setNames(data.frame(genes.1, genes.2), names(species_ids)[c(i,j)])
+      element = element + 1
+    }
+  }
+  return(type.list)
+})
+
+top.ortho.markers = lapply(PHOTORECEPTORS, function(type){
+  gene.summary[[type]][1:4] %>% 
+    Reduce(function(dtf1,dtf2) full_join(dtf1, dtf2, by="Chicken"), .)
+})
+
+sm_gene_table = do.call(rbind, top.ortho.markers)
+sm_gene_table$row_annotation = unlist(sapply(seq_along(top.ortho.markers), function(index) rep(names(top.ortho.markers)[index], nrow(top.ortho.markers[[index]]))))
+
+# Filter table to genes in at least 3 species (except for blue and green)
+sm_gene_table$num_NAs = apply(sm_gene_table, 1, function(x) length(which(is.na(x))))
+sm_gene_table = subset(sm_gene_table, !(row_annotation %in% c("red", "UV", "rod") & num_NAs > 2))
+```
+
+Short for figure 2
+
+```{r, fig.height=6, fig.width=10}
+png('figures/fig2_heatmap.png', width=10, height=5, res = 300, units = 'in')
+SAMapHeatmap(objectList, 
+             sm_gene_table, 
+             species.use = c("Zebrafish", "Chicken", "Lizard", "Squirrel", "Human"), 
+             types.use = c("red", "green", "blue", "UV", "rod"), 
+             show_heatmap_legend = FALSE, 
+             width = unit(9, "in"), 
+             show_row_names = FALSE, 
+             show_column_names = FALSE, 
+             rotate = TRUE)
+dev.off()
+```
+
+Tall for supplemental
+
+```{r, fig.height=22, fig.width=14}
+pdf('figures/fig2_heatmap_tall.pdf', height=22, width=14)
+SAMapHeatmap(objectList, 
+             sm_gene_table, 
+             species.use = c("Zebrafish", "Chicken", "Lizard", "Squirrel", "Human"), 
+             types.use = c("red", "green", "blue", "UV", "rod"), 
+             show_heatmap_legend = FALSE, 
+             show_row_names = TRUE,
+             show_column_names = FALSE, 
+             width = unit(5, "in"))
+dev.off()
+```
+
+## Other stuff
+
+```{r, fig.height=2.4, fig.width=8}
+# Reading in h5ad fails with Error: Missing required datasets 'levels' and 'values'
+# library(SeuratDisk)
+# Convert("samap/controlfiles4.h5ad", dest = "h5seurat", overwrite = TRUE)
+# sm <- LoadH5Seurat("samap/controlfiles4.h5seurat")
+# sm
+
+sm_umap = fread('MappingTable/zechlisqhs_single_res_0_leiden.csv', header = TRUE)[,-1] %>% 
+  as.data.frame %>% 
+  setNames(c("UMAP_1", "UMAP_2", "annotated", "species", "leiden"))
+
+# sm_umap$orthotype = gsub('0', 'rod', gsub('1', 'red', gsub('2', 'UV', gsub('3', 'blue', gsub('4', 'green', sm_umap$leiden)))))
+sm_umap$leiden = as.character(sm_umap$leiden)
+
+# Overlap analysis
+sm_umap$species_annotated = paste0(sm_umap$species, "_", sm_umap$annotated)
+jaccard_matrix = do.call(rbind, lapply(unique(sm_umap$species), function(species_) {
+  sm_umap = subset(sm_umap, species %in% species_)
+  JSMatrix(table(sm_umap$species_annotated, sm_umap$leiden))
+}))
+
+# Ordered by species
+ancestral_types =c("red", "green", "blue", "UV", "rod")
+type_order = as.vector(outer(names(species_palette2), ancestral_types, function(x, y) paste0(x, '_', y)))
+species_order = as.vector(outer(ancestral_types, names(species_palette2), function(y, x) paste0(x, '_', y)))
+# rownames(jaccard_matrix) = factor(rownames(jaccard_matrix), levels = type_order)
+
+plt.leiden = plot_grid(
+  TitlePlot(PrettyUmap(sm_umap, group.by = "leiden", label = TRUE, show.legend = FALSE, angle = -pi/2,
+                       cols = c('turquoise', 'gold', 'orangered', 'purple', 'grey')),
+            title = 'Unsupervised clusters'),
+  # NA,
+  TitlePlot(JSHeatmap(t(jaccard_matrix),
+          column.order = species_order,
+          row.order = c(0,2,4,1,3),
+          max.value = 0.5,
+          stagger.threshold = 0.05) +
+          scale_fill_gradient2(low = "white", mid = 'orangered', high = "darkred", midpoint = 0.4, limits = c(0,0.6), na.value = "darkred"),
+    title = "Correspondence to true clusters\n"),
+  nrow = 1, rel_widths = c(0.6,1), labels = c('c', 'd'), label_size = 20
+)
+plt.leiden
+```
+
+## UMAPs
+
+```{r, fig.height=6.5, fig.width=8}
+sm_umap = fread('MappingTable/zechlisqhs_single_res_0_leiden_v2.csv', header = TRUE) %>% 
+  as.data.frame %>% 
+  setNames(c('cell', "UMAP_1", "UMAP_2", "annotated", "species", "leiden"))
+
+sm_umap$species = names(species_palette)[match(sm_umap$species, names(species_palette2))]
+sm_umap$species = factor(sm_umap$species, levels = speciesList)
+
+# Seurat integration
+ortho = readRDS("../../Species_Objects/Cone_Objects/zechlisqhs_seurat_v2.rds")
+
+plt.umaps = plot_grid(
+  TitlePlot(PrettyUmap2(ortho, group.by = "annotated", cols = pr_palette, label = FALSE, show.legend = FALSE, alpha = 0.03,  angle = pi/3), title = 'Seurat (1-to-1 orthologs)'), 
+  NULL,
+  TitlePlot(PrettyUmap2(sm_umap, group.by = "annotated", cols = pr_palette, label = FALSE, show.legend = TRUE, alpha = 0.03, angle = -pi/2), title = 'SAMap'),
+  PrettyUmap2(ortho, group.by = "species", label = FALSE, show.legend = FALSE, cols = species_palette, alpha = 0.03, angle = pi/3), 
+  NULL,
+  PrettyUmap2(sm_umap, group.by = "species", label = FALSE, show.legend = TRUE, cols = species_palette, alpha = 0.03, angle = -pi/2), 
+  # labels = c('a', 'b', '', ''), 
+  label_size = 20, 
+  ncol = 3, 
+  rel_widths = c(1,-0.3, 1), align = 'v', axis = 'lr')
+
+plt.umaps
+```
+
+
+```{r, fig.height=4, fig.width=6}
+pdf("figures/fig2_umaps.pdf", height=4, width=6)
+plt.umaps
+dev.off()
+```
+
+
+```{r}
+ortho$species_annotated = paste0(substr(ortho$species, 0, 2), "_", ortho$annotated)
+PseudoBulkPCA(ortho, group.by = "species_annotated", title = "integrated assay", min.pct.expressed = 10, assay = "integrated", axes = c(5,6)) #features = ortho@assays$integrated@var.features)
+PseudoBulkPCA(ortho, group.by = "annotated", title = "integrated assay", min.pct.expressed = 1, assay = "integrated", axes = c(1,2)) #features = ortho@assays$integrated@var.features)
+```
+
+With double cones
+
+```{r, fig.height=4, fig.width=10}
+ortho = OrthotypeAnalysis2(objectList$Chicken, 
+                           objectList[c("Zebrafish", "Lizard", "Opossum", "Rat", "Human")], list(ze2ch, li2ch, op2ch, rn2ch, hs2ch), 
+                           downsample = 100, 
+                           types.use = c("red", "green", "blue", "UV", "rod", "principle", "accessory"), 
+                           cluster_resolution = 0.5)
+theme_umap(DimPlot(ortho, group.by = "species", shuffle = TRUE)) | theme_umap(DimPlot(ortho, group.by = "annotated", label = TRUE, shuffle = TRUE) + NoLegend())
+OrthotypeHeatmaps2(ortho)
+```
+
+## Metrics computation requires export to python
+
+```{r}
+# Seurat integration
+ortho = readRDS("../../Species_Objects/Cone_Objects/zechlisqhs_seurat_v2.rds")
+SeuratToH5ad2(ortho, "../../Species_Objects/Cone_Objects/zechlisqhs_seurat_v2.h5ad", counts.only = FALSE)
+
+# Save the graph, sorted
+cells.use = sapply(fread('MappingTable/zechlisqhs_single_res_0_leiden_v2.csv', header = TRUE)$V1, function(x) substr(x, 1, nchar(x) - 2), USE.NAMES = FALSE)
+write.csv(ortho@graphs$integrated_snn[cells.use,cells.use], "../../Species_Objects/Cone_Objects/zechlisqhs_seurat_v2.csv")
+head(ortho@meta.data)
+```
+
+# Figure 3
+
+## Sankeys
+
+```{r, fig.height=0.5, fig.width=18}
+animals2 = plot_grid(plotlist = lapply(c("Chicken", "Lizard", "Chicken", "Lizard", "Chicken", "Lizard", "Chicken", "Lizard", "Zebrafish", "Chicken", "Zebrafish", "Lizard"), function(species) image_ggplot(image_read(image.files[[species]]))), 
+                    nrow = 1, rel_widths = c(1,1,1,1,1,1,1,1,1,1,1,1))
+
+animals2
+```
+
+```{r, fig.height=3.5, fig.width=18}
+fig4PanelA = plot_grid(
+  TitlePlot(DrawSankey3(MedianTable("MappingTable/chli_single_res"), species1 = 'ch', species2 = 'li'), ""), 
+  TitlePlot(DrawSankey3(MedianTable("MappingTable/chli_double_res"), species1 = 'ch', species2 = 'li'), ""), 
+  TitlePlot(DrawSankey3(MedianTable("MappingTable/chli_swapch_res"), species1 = 'ch', species2 = 'li'), ""), 
+  NULL,
+  TitlePlot(DrawSankey3(MedianTable("MappingTable/chli_swapli_res"), species1 = 'ch', species2 = 'li'), ""), 
+  TitlePlot(DrawSankey3(MedianTable("MappingTable/zechli_double"), species1 = 'ze', species2 = 'ch'), ""), 
+  TitlePlot(DrawSankey3(MedianTable("MappingTable/zechli_double"), species1 = 'ze', species2 = 'li'), ""), 
+  # labels = c("a", "", "b", "", "", "c", ""), 
+  rel_widths = c(1,1,1,0.05,1,1,1),
+  label_size = 20, nrow = 1, label_y = 1.03
+)
+```
+
+```{r, fig.height=3.5, fig.width=18}
+pdf('figures/fig3_sankey.pdf', height=3.5, width=18)
+plot_grid(fig4PanelA, 
+          animals2, 
+          ncol = 1, 
+          rel_heights = c(9,1))
+dev.off()
+```
+
+```{r}
+fig4PanelA = plot_grid(plotlist = list(
+  TitlePlot(DrawSankey3(MedianTable("MappingTable/chli_single_res"), species1 = 'ch', species2 = 'li'), ""), 
+  TitlePlot(DrawSankey3(MedianTable("MappingTable/chli_double_res"), species1 = 'ch', species2 = 'li'), ""), 
+  animals2[1:4],
+  TitlePlot(DrawSankey3(MedianTable("MappingTable/chli_swapli_res"), species1 = 'ch', species2 = 'li'), ""), 
+  TitlePlot(DrawSankey3(MedianTable("MappingTable/chli_swapch_res"), species1 = 'ch', species2 = 'li'), ""), 
+  animals2[5:8],
+  TitlePlot(DrawSankey3(MedianTable("MappingTable/zechli_double"), species1 = 'ze', species2 = 'ch'), ""), 
+  TitlePlot(DrawSankey3(MedianTable("MappingTable/zechli_double"), species1 = 'ze', species2 = 'li'), ""),
+  animals2[9:12],
+),
+  # labels = c("a", "", "b", "", "c", ""), 
+  # rel_widths = c(1,1,1,1,1,1),
+  label_size = 20, ncol = 2, label_y = 1.03
+)
+```
+
+```{r, fig.height=12, fig.width=8}
+pdf('figures/fig3_sankey_tall.pdf', height=12, width=8)
+fig4PanelA
+dev.off()
+```
+
+
+
+```{r}
+SAMapAlignmentHeatmap(MeanTable("MappingTable/chli_single_res"))
+SAMapAlignmentHeatmap(MeanTable("MappingTable/chli_double_res"))
+SAMapAlignmentHeatmap(MeanTable("MappingTable/chli_swapch_res"))
+SAMapAlignmentHeatmap(MeanTable("MappingTable/chli_swapli_res"))
+# SAMapAlignmentHeatmap(MeanTable("MappingTable/chli_double_res"), cols = c("white", "#fbd9d3", "#ffb09c", "red", "darkred"))
+# SAMapAlignmentHeatmap(MeanTable("MappingTable/chli_swapch_res"), cols = c("white", "#fbd9d3", "#ffb09c", "red", "darkred"))
+# SAMapAlignmentHeatmap(MeanTable("MappingTable/chli_swapli_res"), cols = c("white", "#fbd9d3", "#ffb09c", "red", "darkred"))
+
+# with zebrafish
+SAMapAlignmentHeatmap(MeanTable("MappingTable/zechli_double"))
+```
+
+## Full alignment
+
+```{r}
+pdf("figures/fig3_full.pdf", height = 5, width = 7)
+SAMapAlignmentHeatmap(MedianTable("MappingTable/zechlisqhs_double"), 
+                      cols = c("white", "#fbd9d3", "#ffb09c", "red", "darkred"))
+dev.off()
+```
+
+## Gene pairs of double cones and red cones
+
+```{r}
+PHOTORECEPTORS = sort(setNames(c('principal', 'accessory', 'red', 'green', 'blue', 'UV', 'rod'), 
+                               c('principal', 'accessory', 'red', 'green', 'blue', 'UV', 'rod')))
+species_ids = sort(setNames(c('ze', 'ch', 'li', 'op', 'sq', 'hs'), 
+                            c('Zebrafish', 'Chicken', 'Lizard', 'Opossum', 'Squirrel', 'Human')))
+
+# gene_pairs = read.csv("MappingTable/chli_swapch_gene_pairs.csv", row.names = 1)
+# type.list1 = GetTypeList(gene_pairs, PHOTORECEPTORS, species_ids)
+# 
+# gene_pairs = read.csv("MappingTable/chli_swapli_gene_pairs.csv", row.names = 1)
+# type.list2 = GetTypeList(gene_pairs, PHOTORECEPTORS, species_ids)
+
+gene_pairs = read.csv("MappingTable/zechli_gene_pairs_0.csv", row.names = 1)
+type.list = GetTypeList(gene_pairs, PHOTORECEPTORS, species_ids)
+
+a2a_summary = type.list$ch$accessory$li$accessory
+a2a_summary$ident = paste0(a2a_summary$Chicken, '-', a2a_summary$Lizard)
+
+p2p_summary = type.list$ch$principal$li$principal
+p2p_summary$ident = paste0(p2p_summary$Chicken, '-', p2p_summary$Lizard)
+
+gene_summary = rbind(a2a_summary, p2p_summary)
+gene_summary$row_annotation = c(rep("accessory markers", nrow(a2a_summary)), 
+                                rep("principal markers", nrow(p2p_summary)))
+
+gene_pairs = read.csv("MappingTable/zechli_gene_pairs_1.csv", row.names = 1)
+type.list = GetTypeList(gene_pairs, PHOTORECEPTORS, species_ids)
+
+a2a_summary = type.list$ch$accessory$li$accessory
+a2a_summary$ident = paste0(a2a_summary$Chicken, '-', a2a_summary$Lizard)
+
+p2p_summary = type.list$ch$principal$li$principal
+p2p_summary$ident = paste0(p2p_summary$Chicken, '-', p2p_summary$Lizard)
+
+gene_summary2 = rbind(a2a_summary, p2p_summary)
+gene_summary2$row_annotation = c(rep("accessory markers", nrow(a2a_summary)), 
+                                rep("principal markers", nrow(p2p_summary)))
+
+# Only keep reproducible markers
+reproducible.acc = intersect(subset(gene_summary, row_annotation == "accessory markers")$ident, 
+                             subset(gene_summary2, row_annotation == "accessory markers")$ident)
+reproducible.prin = union(subset(gene_summary, row_annotation == "principal markers")$ident, 
+                           subset(gene_summary2, row_annotation == "principal markers")$ident)
+
+gene_summary_final = rbind(gene_summary2[gene_summary2$ident %in% c(reproducible.acc) & gene_summary2$row_annotation == "accessory markers",], 
+                           unique(rbind(subset(gene_summary, row_annotation == "principal markers"), 
+                                        subset(gene_summary2, row_annotation == "principal markers"))))
+
+li2ch = readRDS('orthology_graphs/li2ch.rds')
+# 1:1 orthologs get an asterisk
+gene_summary_final$one2one = apply(gene_summary_final, 1, function(row) {
+  if(row["Chicken"] %in% rownames(li2ch) & row["Lizard"] %in% colnames(li2ch)) {
+    li2ch[row["Chicken"], row["Lizard"]]
+  } else 0
+})
+```
+
+
+```{r}
+# principal_summary = rbind(type.list1$ch$red$li$principal, 
+#                           type.list2$ch$principal$li$red) %>% unique
+# principal_summary$ident = paste0(principal_summary$Chicken, '-', principal_summary$Lizard)
+# 
+# accessory_summary = rbind(type.list1$ch$red$li$accessory, 
+#                           type.list2$ch$accessory$li$red) %>% unique
+# accessory_summary$ident = paste0(accessory_summary$Chicken, '-', accessory_summary$Lizard)
+
+# Make unique
+# intersection = intersect(principal_summary$ident, accessory_summary$ident)
+# both = principal_summary[principal_summary$ident %in% intersection,]
+# principal_summary = principal_summary[!principal_summary$ident %in% intersection,]
+# accessory_summary = accessory_summary[!accessory_summary$ident %in% intersection,]
+
+# gene_summary = rbind(a2a_summary, p2p_summary)
+#                      #accessory_summary, principal_summary, both)
+# gene_summary$row_annotation = c(rep("accessory markers", nrow(a2a_summary)), 
+#                                 rep("principal markers", nrow(p2p_summary)))
+#                                 # rep("accessory-red", nrow(accessory_summary)), 
+#                                 # rep("principal-red", nrow(principal_summary)),
+#                                 # rep("all", nrow(both)))
+```
+
+```{r, fig.height=6, fig.width=8}
+type_palette = pr_palette
+png("figures/fig3_genes_rotate.png", height=6, width=8, units = 'in', res = 300)
+SAMapHeatmap(objectList, 
+              # pr_palette,
+              gene_summary_final, 
+              show_column_names = TRUE,
+              show_row_names = FALSE,
+              species.use = c("Chicken", "Lizard"), 
+              types.use = c("accessory", "principal", "red", "green", "blue", "UV", "rod"), 
+              show_heatmap_legend = TRUE, 
+              rotate = TRUE)
+              # width = unit(4, "in"))
+dev.off()
+```
+
+```{r, fig.height=8, fig.width=12}
+# png("figures/fig3_genes.png", height=8, width=12, units = 'in', res = 300)
+pdf("figures/fig3_genes.pdf", height=8, width=7)
+SAMapHeatmap(objectList, 
+             gene_summary_final, 
+             show_column_names = FALSE,
+             show_row_names = TRUE,
+             species.use = c("Chicken", "Lizard"), 
+             types.use = c("accessory", "principal", "red", "green", "blue", "UV", "rod"), 
+             show_heatmap_legend = FALSE, 
+             rotate = FALSE,
+             width = unit(4, "in"))
+dev.off()
+```
+
+## All photoreceptors heatmap
+
+Figure for Tom's mini review
+
+Extract genes for single cones and rods
+
+```{r, fig.height=25, fig.width=13}
+# This integration included double cones but not mammals
+# gene_pairs = read.csv("MappingTable/zechli_gene_pairs_0.csv", row.names = 1)
+
+# This has all photoreceptor types and all five species
+gene_pairs = read.csv("MappingTable/zechlisqhs_double_genepairs.csv", row.names = 1)
+
+PHOTORECEPTORS = setNames(c('red', 'green', 'blue', 'UV', 'principal', 'accessory', 'rod'), 
+                          c('red', 'green', 'blue', 'UV', 'principal', 'accessory', 'rod'))
+species_ids = sort(setNames(c('ze', 'ch', 'li', 'sq', 'hs'), 
+                            c('Zebrafish', 'Chicken', 'Lizard', 'Squirrel', 'Human')))
+
+gene.summary = lapply(PHOTORECEPTORS, function(type) {
+  type.list = list()
+  element = 1
+  for(i in 1:(length(species_ids)-1)){
+    for(j in (i+1):length(species_ids)){
+      column.name = paste0(species_ids[i], "_", type, ".", species_ids[j], "_", type)
+      genes.1 = ExtractString(gene_pairs[[column.name]], paste0(species_ids[i], "_"), ";")
+      genes.1 = genes.1[genes.1 != ""]
+      genes.2 = ExtractString(gene_pairs[[column.name]], paste0(species_ids[j], "_"))
+      genes.2 = genes.2[genes.2 != ""]
+      type.list[[element]] = setNames(data.frame(genes.1, genes.2), names(species_ids)[c(i,j)])
+      element = element + 1
+    }
+  }
+  return(type.list)
+})
+
+top.ortho.markers = lapply(PHOTORECEPTORS, function(type){
+  gene.summary[[type]][1:4] %>% 
+    Reduce(function(dtf1,dtf2) full_join(dtf1, dtf2, by="Chicken"), .)
+})
+
+sm_gene_table = do.call(rbind, top.ortho.markers)
+sm_gene_table$row_annotation = unlist(sapply(seq_along(top.ortho.markers), function(index) rep(names(top.ortho.markers)[index], nrow(top.ortho.markers[[index]]))))
+
+# Filter table to genes in at least 3 species (except for blue and green)
+sm_gene_table$num_NAs = apply(sm_gene_table, 1, function(x) length(which(is.na(x))))
+sm_gene_table = subset(sm_gene_table, !(row_annotation %in% c("red", "UV", "rod") & num_NAs > 2))
+```
+
+
+```{r, fig.height=24, fig.width=10}
+sm_gene_table
+
+SAMapHeatmap(objectList, 
+             sm_gene_table, 
+             species.use = c("Zebrafish", "Chicken", "Lizard", "Squirrel", "Human"), 
+             types.use = c("red", "green", "blue", "UV", 'principal', 'accessory', "rod"), 
+             show_heatmap_legend = FALSE, 
+             show_row_names = TRUE,
+             show_column_names = FALSE, 
+             width = unit(5, "in"))
+```
+
+Manual curation
+
+Principal:
+tenm3/TENM2/TENM2/TENM2/TENM2
+thrb/THRB/THRB/THRB/THRB
+elfn1b/ELFN1/ELFN1/ELFN1/ELFN1
+NA/GUCA1C/GUCA1C/NA/NA
+rbp4l/RBP4/LOC132768105/NA/NA
+ckbb/CKB/CKB/CKB/CKB
+kif1b/KIF1B/KIF1B/KIF1B/KIF1B
+sh3gl2a/SH3GL2/SH3GL2/SH3GL2/SH3GL2
+
+Accessory:
+lingo1a/LINGO1/LINGO2/NA/NA
+TMEM132C/TMEM132C/TMEM132C/NA/NA
+stbd1/STBD1/STBD1/STBD1/STBD1
+mylka/MYLK/MYLK/MYLK/MYLK
+SPHKAP/SPHKAP/SPHKAP/SPHKAP/SPHKAP
+NA/MPDZ/MPDZ/MPDZ/MPDZ
+plxna1a/PLXNA1/PLXNA1/PLXNA1/PLXNA1
+map2/MAP2/MAP2/MAP2/MAP2
+NA/AKAP9/AKAP9/AKAP9/AKAP9
+sema6dl/SEMA6D/SEMA6D/SEMA6D/SEMA6D
+
+```{r}
+ze2ch = readRDS("orthology_graphs/ze2ch.rds")
+li2ch = readRDS("orthology_graphs/li2ch.rds")
+op2ch = readRDS("orthology_graphs/op2ch.rds")
+sq2ch = readRDS("orthology_graphs/sq2ch.rds")
+hs2ch = readRDS("orthology_graphs/hs2ch.rds")
+
+graph.list = c(ze2ch, li2ch, sq2ch, hs2ch)
+
+## Principal
+lapply(graph.list, function(graph) ConvertGeneSymbolsFromMatrix(t(graph), c('ELFN1', 'GUCA1C', 'RBP4', 'OPN1LW', 'SH3GL2', 'KIF1B', 'CKB')))
+
+## Accessory
+lapply(graph.list, function(graph) ConvertGeneSymbolsFromMatrix(t(graph), c('LINGO1', 'TMEM132C', 'STBD1', 'MYLK', 'SPHKAP', 'MPDZ', 'PLXNA1', 'MAP2', 'AKAP9', 'SEMA6D')))
+```
+
+Get the original genes from figure 2
+
+```{r, fig.height=25, fig.width=13}
+# gene_pairs = read.csv("samap/ze_ch_li_op_rn_hs_gene_pairs.csv", row.names = 1)
+# gene_pairs = read.csv("samap/controlfiles4_gp.csv", row.names = 1)
+gene_pairs = read.csv("MappingTable/zechlisqhs_genepairs.csv", row.names = 1)
+# chicken.genes = ExtractString(gene_pairs$ch_UV.ze_UV, "ch_", ";")
+# zebrafish.genes = ExtractString(gene_pairs$ch_UV.ze_UV, "ze_")
+PHOTORECEPTORS = setNames(c('red', 'green', 'blue', 'UV', 'rod'), 
+                          c('red', 'green', 'blue', 'UV', 'rod'))
+species_ids = sort(setNames(c('ze', 'ch', 'li', 'sq', 'hs'), 
+                            c('Zebrafish', 'Chicken', 'Lizard', 'Squirrel', 'Human')))
+
+gene.summary = lapply(PHOTORECEPTORS, function(type) {
+  type.list = list()
+  element = 1
+  for(i in 1:(length(species_ids)-1)){
+    for(j in (i+1):length(species_ids)){
+      column.name = paste0(species_ids[i], "_", type, ".", species_ids[j], "_", type)
+      genes.1 = ExtractString(gene_pairs[[column.name]], paste0(species_ids[i], "_"), ";")
+      genes.1 = genes.1[genes.1 != ""]
+      genes.2 = ExtractString(gene_pairs[[column.name]], paste0(species_ids[j], "_"))
+      genes.2 = genes.2[genes.2 != ""]
+      type.list[[element]] = setNames(data.frame(genes.1, genes.2), names(species_ids)[c(i,j)])
+      element = element + 1
+    }
+  }
+  return(type.list)
+})
+
+top.ortho.markers = lapply(PHOTORECEPTORS, function(type){
+  gene.summary[[type]][1:4] %>% 
+    Reduce(function(dtf1,dtf2) full_join(dtf1, dtf2, by="Chicken"), .)
+})
+
+sm_gene_table = do.call(rbind, top.ortho.markers)
+sm_gene_table$row_annotation = unlist(sapply(seq_along(top.ortho.markers), function(index) rep(names(top.ortho.markers)[index], nrow(top.ortho.markers[[index]]))))
+
+# Filter table to genes in at least 3 species (except for blue and green)
+sm_gene_table$num_NAs = apply(sm_gene_table, 1, function(x) length(which(is.na(x))))
+sm_gene_table = subset(sm_gene_table, !(row_annotation %in% c("red", "UV", "rod") & num_NAs > 2))
+```
+
+```{r, fig.height=10, fig.width=10}
+sm_gene_table
+
+sm_gene_table_no_opsin = subset(sm_gene_table, !startsWith(Chicken, 'OPN') & !startsWith(Chicken, 'RHO'))
+sm_gene_table_no_opsin
+
+filtered_df <- sm_gene_table_no_opsin %>%
+  group_by(row_annotation) %>%
+  slice_head(n = 10) %>%
+  ungroup()
+
+filtered_df
+
+# Add in principal and accessory
+
+data_string <- "tenm3/TENM2/TENM2/TENM2/TENM2
+thrb/THRB/THRB/THRB/THRB
+elfn1b/ELFN1/ELFN1/ELFN1/ELFN1
+NA/GUCA1C/GUCA1C/NA/NA
+rbp4l/RBP4/LOC132768105/NA/NA
+ckbb/CKB/CKB/CKB/CKB
+kif1b/KIF1B/KIF1B/KIF1B/KIF1B
+sh3gl2a/SH3GL2/SH3GL2/SH3GL2/SH3GL2
+lingo1a/LINGO1/LINGO2/NA/NA
+TMEM132C/TMEM132C/TMEM132C/NA/NA
+stbd1/STBD1/STBD1/STBD1/STBD1
+mylka/MYLK/MYLK/MYLK/MYLK
+SPHKAP/SPHKAP/SPHKAP/SPHKAP/SPHKAP
+NA/MPDZ/MPDZ/MPDZ/MPDZ
+plxna1a/PLXNA1/PLXNA1/PLXNA1/PLXNA1
+map2/MAP2/MAP2/MAP2/MAP2
+NA/AKAP9/AKAP9/AKAP9/AKAP9
+sema6dl/SEMA6D/SEMA6D/SEMA6D/SEMA6D"
+
+# Convert the string into a data frame
+df <- read.delim(text = data_string, header = FALSE, sep = "/")
+
+# Add column names if needed
+colnames(df) <- c("Zebrafish", "Chicken", "Lizard", "Squirrel", "Human")
+df$row_annotation = c(rep('principal', 8), rep('accessory', 10))
+
+combined.df = rbind(filtered_df[,c(5,1,3,4,2,6)],df)
+combined.df = combined.df %>% arrange(factor(row_annotation, levels = c('red', 'green', 'blue', 'UV', 'principal', 'accessory', 'rod')))
+
+pdf("figures/all_pr_top10.pdf", height=10, width=10)
+SAMapHeatmap(objectList, 
+             combined.df, 
+             species.use = c("Zebrafish", "Chicken", "Lizard", "Squirrel", "Human"), 
+             types.use = c("red", "green", "blue", "UV", 'principal', 'accessory', "rod"), 
+             show_heatmap_legend = FALSE, 
+             show_row_names = TRUE,
+             show_column_names = FALSE, 
+             width = unit(5, "in"))
+dev.off()
+
+dat = SAMapHeatmap(objectList, 
+             combined.df, 
+             species.use = c("Zebrafish", "Chicken", "Lizard", "Squirrel", "Human"), 
+             types.use = c("red", "green", "blue", "UV", 'principal', 'accessory', "rod"), 
+             show_heatmap_legend = FALSE, 
+             show_row_names = TRUE,
+             show_column_names = FALSE, 
+             width = unit(5, "in"), 
+             return.data = TRUE)
+
+write.csv(dat, 'figures/all_pr_top10.csv')
+```
+
+
+## Statistics
+
+```{r}
+MeanTable("MappingTable/chli_swapch_res")['li_accessory', ]
+StdTable("MappingTable/chli_swapch_res")['li_accessory', ]
+
+MeanTable("MappingTable/zechli_double")['li_accessory', ]
+StdTable("MappingTable/zechli_double")['li_accessory', ]
+
+ggboxplot(reshape2::melt(GrabSamples("MappingTable/chli_swapch_res", 'li_accessory')), "Var1", "value") + RotatedAxis()
+ggboxplot(reshape2::melt(GrabSamples("MappingTable/chli_swapli_res", 'ch_accessory')), "Var1", "value") + RotatedAxis()
+ggboxplot(reshape2::melt(GrabSamples("MappingTable/zechli_double", 'li_accessory')), "Var1", "value") + RotatedAxis()
+ggboxplot(reshape2::melt(GrabSamples("MappingTable/zechli_double", 'ch_accessory')), "Var1", "value") + RotatedAxis()
+```
+
+
+```{r}
+# wilcoxon rank sum test
+wilcox.test(GrabSamples("MappingTable/chli_swapch_res", 'li_accessory')['ch_blue',], 
+            GrabSamples("MappingTable/chli_swapch_res", 'li_accessory')['ch_red',]
+            )
+
+wilcox.test(GrabSamples("MappingTable/chli_swapli_res", 'ch_accessory')['li_green',], 
+            GrabSamples("MappingTable/chli_swapli_res", 'ch_accessory')['li_red',]
+            )
+
+wilcox.test(GrabSamples("MappingTable/zechli_double", 'li_accessory')['ze_blue',], 
+            GrabSamples("MappingTable/zechli_double", 'li_accessory')['ze_red',]
+            )
+
+wilcox.test(GrabSamples("MappingTable/zechli_double", 'ch_accessory')['ze_blue',], 
+            GrabSamples("MappingTable/zechli_double", 'ch_accessory')['ze_red',]
+            )
+```
+
+# Joint PCA
+
+```{r}
+sm_expr = as.matrix(fread("samap/controlfiles4_translation.csv"), rownames=1)
+species = str_split_fixed(colnames(sm_expr), "_", 2)[,1]
+rownames(sm_expr) = str_split_fixed(rownames(sm_expr), "_", 2)[,2]
+colnames(sm_expr) = str_split_fixed(colnames(sm_expr), "_", 2)[,2]
+sm_seurat = CreateSeuratObject(sm_expr)
+sm_seurat$species = species
+
+# Add metadata
+sm_seurat = MapBack(sm_seurat, objectList$Chicken, group.by = "annotated")
+sm_seurat$ch.annotated = sm_seurat$mapped.back
+
+sm_seurat = MapBack(sm_seurat, objectList$Lizard, group.by = "annotated")
+sm_seurat$li.annotated = sm_seurat$mapped.back
+
+sm_seurat = MapBack(sm_seurat, objectList$Zebrafish, group.by = "annotated")
+sm_seurat$ze.annotated = sm_seurat$mapped.back
+
+sm_seurat$annotated = gsub("NA", "", paste0(sm_seurat$ch.annotated, sm_seurat$li.annotated, sm_seurat$ze.annotated))
+
+# Checks
+table(sm_seurat$annotated)
+table(sm_seurat$species)
+
+# Define clusters
+sm_seurat$species_annotated = paste0(sm_seurat$species, "_", sm_seurat$annotated)
+```
+
+## Feature selection
+
+```{r}
+top2000at5 = SelectFeatures(sm_seurat, nfeatures = 2000, min.pct.expressed = 5, group.by = "species_annotated")
+top1000at5 = SelectFeatures(sm_seurat, nfeatures = 1000, min.pct.expressed = 5, group.by = "species_annotated")
+top1000at10 = SelectFeatures(sm_seurat, nfeatures = 1000, min.pct.expressed = 10, group.by = "species_annotated")
+top4000at5 = SelectFeatures(sm_seurat, nfeatures = 4000, min.pct.expressed = 5, group.by = "species_annotated")
+top4000at10 = SelectFeatures(sm_seurat, nfeatures = 4000, min.pct.expressed = 10, group.by = "species_annotated")
+
+# All five opsins are present
+top1000at10[startsWith(top1000at10, "OPN")]
+
+write.csv(top2000at5, "samap/top2000at5.csv", row.names = FALSE)
+write.csv(top1000at5, "samap/top1000at5.csv", row.names = FALSE)
+write.csv(top1000at10, "samap/top1000at10.csv", row.names = FALSE)
+write.csv(top4000at5, "samap/top4000at5.csv", row.names = FALSE)
+write.csv(top4000at10, "samap/top4000at10.csv", row.names = FALSE)
+```
+
+```{r}
+sm_expr = as.matrix(fread("samap/expfiles4_translation.csv"), rownames=1)
+species = str_split_fixed(colnames(sm_expr), "_", 2)[,1]
+rownames(sm_expr) = str_split_fixed(rownames(sm_expr), "_", 2)[,2]
+colnames(sm_expr) = str_split_fixed(colnames(sm_expr), "_", 2)[,2]
+sm_seurat = CreateSeuratObject(sm_expr)
+sm_seurat$species = species
+
+# Add metadata
+sm_seurat = MapBack(sm_seurat, objectList$Chicken, group.by = "annotated")
+sm_seurat$ch.annotated = sm_seurat$mapped.back
+
+sm_seurat = MapBack(sm_seurat, objectList$Lizard, group.by = "annotated")
+sm_seurat$li.annotated = sm_seurat$mapped.back
+
+sm_seurat = MapBack(sm_seurat, ze_dev, group.by = "annotated")
+sm_seurat$ze.annotated = sm_seurat$mapped.back
+
+sm_seurat$annotated = gsub("NA", "", paste0(sm_seurat$ch.annotated, sm_seurat$li.annotated, sm_seurat$ze.annotated))
+
+table(sm_seurat$annotated)
+table(sm_seurat$species)
+
+# Define clusters
+sm_seurat$species_annotated = paste0(sm_seurat$species, "_", sm_seurat$annotated)
+
+top10000at1 = SelectFeatures(sm_seurat, nfeatures = 10000, min.pct.expressed = 1, group.by = "species_annotated")
+top2000at5 = SelectFeatures(sm_seurat, nfeatures = 2000, min.pct.expressed = 5, group.by = "species_annotated")
+top1000at5 = SelectFeatures(sm_seurat, nfeatures = 1000, min.pct.expressed = 5, group.by = "species_annotated")
+top1000at10 = SelectFeatures(sm_seurat, nfeatures = 1000, min.pct.expressed = 10, group.by = "species_annotated")
+top4000at5 = SelectFeatures(sm_seurat, nfeatures = 4000, min.pct.expressed = 5, group.by = "species_annotated")
+top4000at10 = SelectFeatures(sm_seurat, nfeatures = 4000, min.pct.expressed = 10, group.by = "species_annotated")
+top5000at5 = SelectFeatures(sm_seurat, nfeatures = 5000, min.pct.expressed = 5, group.by = "species_annotated")
+top5000at10 = SelectFeatures(sm_seurat, nfeatures = 5000, min.pct.expressed = 10, group.by = "species_annotated")
+
+# All five opsins are present
+top1000at10[startsWith(top1000at10, "OPN")]
+
+write.csv(top10000at1, "samap/top10000at1_exp.csv", row.names = FALSE)
+write.csv(top2000at5, "samap/top2000at5_exp.csv", row.names = FALSE)
+write.csv(top1000at5, "samap/top1000at5_exp.csv", row.names = FALSE)
+write.csv(top1000at10, "samap/top1000at10_exp.csv", row.names = FALSE)
+write.csv(top4000at5, "samap/top4000at5_exp.csv", row.names = FALSE)
+write.csv(top4000at10, "samap/top4000at10_exp.csv", row.names = FALSE)
+write.csv(top5000at5, "samap/top5000at5_exp.csv", row.names = FALSE)
+write.csv(top5000at10, "samap/top5000at10_exp.csv", row.names = FALSE)
+```
+
+
+```{r}
+ch.expressed = SelectFeatures(subset(sm_seurat, species == 'ch'), nfeatures = 100000, min.pct.expressed = 10, group.by = "species_annotated")
+li.expressed = SelectFeatures(subset(sm_seurat, species == 'li'), nfeatures = 100000, min.pct.expressed = 10, group.by = "species_annotated")
+ze.expressed = SelectFeatures(subset(sm_seurat, species == 'ze'), nfeatures = 100000, min.pct.expressed = 10, group.by = "species_annotated")
+
+intersection10 = Reduce(intersect, list(ch.expressed, li.expressed, ze.expressed))
+write.csv(intersection10, "samap/features_intersection10.csv", row.names = FALSE)
+
+ch.expressed = SelectFeatures(subset(sm_seurat, species == 'ch'), nfeatures = 100000, min.pct.expressed = 5, group.by = "species_annotated")
+li.expressed = SelectFeatures(subset(sm_seurat, species == 'li'), nfeatures = 100000, min.pct.expressed = 5, group.by = "species_annotated")
+ze.expressed = SelectFeatures(subset(sm_seurat, species == 'ze'), nfeatures = 100000, min.pct.expressed = 5, group.by = "species_annotated")
+
+intersection5 = Reduce(intersect, list(ch.expressed, li.expressed, ze.expressed))
+write.csv(intersection5, "samap/features_intersection5.csv", row.names = FALSE)
+```
+
+Just zebrafish since a similar issue was occurring with that PCA (some noisy lowly expressed genes)
+
+```{r}
+ze.expressed = SelectFeatures(subset(sm_seurat, species == 'ze'), nfeatures = 100000, min.pct.expressed = 1, group.by = "species_annotated")
+write.csv(ze.expressed, 'samap/features_zebrafish1.csv', row.names = FALSE)
+
+ze.expressed = SelectFeatures(subset(sm_seurat, species == 'ze'), nfeatures = 100000, min.pct.expressed = 2, group.by = "species_annotated")
+write.csv(ze.expressed, 'samap/features_zebrafish2.csv', row.names = FALSE)
+
+ze.expressed = SelectFeatures(subset(sm_seurat, species == 'ze'), nfeatures = 100000, min.pct.expressed = 5, group.by = "species_annotated")
+write.csv(ze.expressed, 'samap/features_zebrafish5.csv', row.names = FALSE)
+
+# Since we sub
+ze_dev.pct = SelectFeatures(ze_dev, nfeatures = 100000, min.pct.expressed = 1, group.by = "annotated", return.pct = TRUE)
+ze.pct = SelectFeatures(subset(sm_seurat, species == 'ze'), nfeatures = 100000, min.pct.expressed = 1, group.by = "species_annotated", return.pct = TRUE)
+```
+
+## Pseudobulk PCA
+
+```{r}
+Idents(sm_seurat) = "species_annotated"
+VlnPlot(sm_seurat, group.by = "species_annotated", features = c("nFeature_RNA", "nCount_RNA"))
+
+# Pseudobulk
+features.use = rownames(sm_seurat)
+PseudoBulkPCA(subset(sm_seurat, species == "ze"), features = features.use, group.by = "species_annotated")
+PseudoBulkPCA(subset(sm_seurat, species == "ze"), group.by = "species_annotated", min.pct.expressed = 25)
+PseudoBulkPCA(subset(sm_seurat, species == "ze"), group.by = "species_annotated", features = features.use, scale = FALSE)
+PseudoBulkPCA(subset(sm_seurat, species == "ch"), group.by = "species_annotated", min.pct.expressed = 5)
+PseudoBulkPCA(subset(sm_seurat, species == "li"), group.by = "species_annotated", min.pct.expressed = 5)
+
+# Tests with original zebrafish
+PseudoBulkPCA(objectList$Zebrafish, group.by = "annotated", min.pct.expressed = 0)
+
+# This works
+PseudoBulkPCA(objectList$Zebrafish, group.by = "annotated", min.pct.expressed = 1)
+
+# This also works
+PseudoBulkPCA(objectList$Zebrafish, group.by = "annotated", min.pct.expressed = 0, scale = FALSE)
+```
+
+
+```{r}
+# Zebrafish behaves weird already before even embedding in the same space as lizard and chicken
+DotPlot2(sm_seurat, features = c("OPN1LW", "OPN1MSW", "OPN2SW", "OPN1SW", "RHO"))
+```
+
+What drives ze UV similarity to red in PC2? 
+
+```{r}
+ze_pca = PseudoBulkPCA(subset(sm_seurat, species == "ze"), features = features.use, group.by = "species_annotated", return.plot = FALSE)
+ze_pc2 = PcaContribution(ze_pca, 'PC2')
+
+DotPlot2(subset(sm_seurat, species == "ze"), features = c(head(names(ze_pc2)), tail(names(ze_pc2))))
+
+# PCA is attending to wrong stuff
+DotPlot2(objectList$Zebrafish, features = c("casp8", "tbcc", "npc1", "hagh", "pnkd"), group.by = "annotated")
+```
+
+```{r}
+ze_pca = PseudoBulkPCA(subset(sm_seurat, species == "ze"), features = features.use, group.by = "species_annotated", return.plot = FALSE, scale = FALSE)
+ze_pc2 = PcaContribution(ze_pca, 'PC2')
+
+DotPlot2(subset(sm_seurat, species == "ze"), features = c(head(names(ze_pc2)), tail(names(ze_pc2))))
+
+# PCA is attending to wrong stuff
+DotPlot2(objectList$Zebrafish, features = c("casp8", "tbcc", "npc1", "hagh", "pnkd"), group.by = "annotated")
+```
+
+```{r}
+ze_pca = PseudoBulkPCA(subset(sm_seurat, species == "ze"), group.by = "species_annotated", return.plot = FALSE, min.pct.expressed = 25)
+ze_pc2 = PcaContribution(ze_pca, 'PC2')
+
+DotPlot2(subset(sm_seurat, species == "ze"), features = c(head(names(ze_pc2)), tail(names(ze_pc2))))
+
+# PCA is attending to wrong stuff
+DotPlot2(objectList$Zebrafish, features = c("casp8", "tbcc", "npc1", "hagh", "pnkd"), group.by = "annotated")
+```
+
+PCA is dominated by lowly expressed genes
+
+```{r}
+ze_pca = PseudoBulkPCA(objectList$Zebrafish, group.by = "annotated", return.plot = FALSE, min.pct.expressed = 0)
+ze_pc2 = PcaContribution(ze_pca, 'PC2')
+
+DotPlot2(objectList$Zebrafish, features = c(head(names(ze_pc2)), tail(names(ze_pc2))), group.by = "annotated")
+```
+
+```{r}
+ze_pca = PseudoBulkPCA(objectList$Zebrafish, group.by = "annotated", return.plot = FALSE, min.pct.expressed = 1)
+ze_pc2 = PcaContribution(ze_pca, 'PC2')
+
+DotPlot2(objectList$Zebrafish, features = c(head(names(ze_pc2)), tail(names(ze_pc2))), group.by = "annotated")
+```
+
+```{r}
+ze_pca = PseudoBulkPCA(objectList$Zebrafish, group.by = "annotated", return.plot = FALSE, min.pct.expressed = 15)
+ze_pc2 = PcaContribution(ze_pca, 'PC2')
+
+DotPlot2(objectList$Zebrafish, features = c(head(names(ze_pc2)), tail(names(ze_pc2))), group.by = "annotated")
+```
+
+```{r}
+ze_pca = PseudoBulkPCA(objectList$Zebrafish, group.by = "annotated", return.plot = FALSE, scale = FALSE)
+ze_pc2 = PcaContribution(ze_pca, 'PC2')
+
+DotPlot2(objectList$Zebrafish, features = c(head(names(ze_pc2)), tail(names(ze_pc2))), group.by = "annotated")
+```
+
+## Quantile normalization doesn't help
+
+```{r}
+quantile_normalisation <- function(df){
+  df_rank <- apply(df,2,rank,ties.method="min")
+  df_sorted <- data.frame(apply(df, 2, sort))
+  df_mean <- apply(df_sorted, 1, mean)
+
+  index_to_mean <- function(my_index, my_mean){
+    return(my_mean[my_index])
+  }
+
+  df_final <- apply(df_rank, 2, index_to_mean, my_mean=df_mean)
+  rownames(df_final) <- rownames(df)
+  return(df_final)
+}
+
+sm_avgexpr = AvgExpr(sm_seurat, assay = "RNA", group.by = "species_annotated")
+sm_avgexpr_qn <- quantile_normalisation(sm_avgexpr)
+
+boxplot(sm_avgexpr+1, log = 'y')
+boxplot(sm_avgexpr_qn+1, log = 'y')
+
+PseudoBulkPCA(sm_avgexpr)
+PseudoBulkPCA(sm_avgexpr_qn)
+```
+
+## Within-species scaling works
+
+```{r, fig.height=4, fig.width=4}
+ch.scale = t(scale(t(sm_avgexpr[,startsWith(colnames(sm_avgexpr), "ch")])))
+li.scale = t(scale(t(sm_avgexpr[,startsWith(colnames(sm_avgexpr), "li")])))
+ze.scale = t(scale(t(sm_avgexpr[,startsWith(colnames(sm_avgexpr), "ze")])))
+
+sm_avgexpr_ws = cbind(ch.scale, li.scale, ze.scale)
+PseudoBulkPCA(sm_avgexpr_ws, binary = 0)
+```
+
+## Combat batch correction
+
+```{r}
+batch = str_split_fixed(colnames(sm_avgexpr))
+# modcombat = model.matrix(~1, data=pheno)
+# modcancer = model.matrix(~cancer, data=pheno)
+combat_edata = ComBat(dat=sm_avgexpr, batch=batch)
+```
+
+## Integrate and inspect
+
+```{r, fig.height=7, fig.width=5}
+sm_seurat = ClusterSeurat(sm_seurat, integrate.by = "species", cluster_resolution = 0.2)
+DimPlot(sm_seurat, group.by = c('species', 'annotated', 'seurat_clusters'), ncol = 1, shuffle = TRUE)
+```
+```{r}
+markers0_1 = FindMarkers(sm_seurat, ident.1 = 0, ident.2 = 1)
+DotPlot2(sm_seurat, features = rownames(markers0_1)[1:5])
+
+# Splitting by quality differences for some reason; cluster 0 is higher quality
+FeaturePlot(sm_seurat, features = "nFeature_RNA")
+```
+
+# Markers for Takeshi
+
+## Double vs single
+
+```{r, fig.height=4, fig.width=7}
+objectList$Zebrafish = readRDS("../../Species_Objects/Cone_Objects/Lyu_Zebrafish_PR_adult.rds")
+
+DotPlot(objectList$Chicken, features = c("ZEB2", "CALB1"), group.by = "annotated")
+DotPlot(objectList$Lizard, features = c("ZEB2", "CALB1"), group.by = "annotated")
+
+objectList$Lizard$classification = ifelse(objectList$Lizard$annotated %in% c("principal", "accessory"), "double", "single")
+objectList$Lizard$classification[objectList$Lizard$annotated == "rod"] = "rod"
+de.double.single.liz = FindMarkers(objectList$Lizard, ident.1 = 'double', ident.2 = 'single', group.by = 'classification')
+
+# Double vs single
+DotPlot2(objectList$Lizard, features = c("ZEB2", # single
+                                         "LOC132775583", # double (secretin-like)
+                                         "LOC132767849", # red, principal, accessory
+                                         "THRB", # principle
+                                         "STBD1", "MYLK" # accessory
+                                         ), 
+         group.by = "annotated") + 
+  scale_x_discrete(labels = c("ZEB2 (single)", "LOC132775583 (double)", "LOC132767849 (red/prin/acc)", "THRB (red/prin)", "STBD1 (acc)", "MYLK (acc)"))
+
+# VlnPlot(objectList$Zebrafish, features = c("zeb2a", "zeb2b", "calb1"), group.by = "annotated")
+```
+
+## Other cell classes
+
+```{r, fig.height=5, fig.width=15}
+lizard_full = readRDS('../../Full_Objects/Lizard_full_v1.rds')
+DotPlot2(lizard_full, features = c("ZEB2", # single
+                                         "LOC132775583", # double (secretin-like)
+                                         "LOC132767849", # red, principal, accessory
+                                         "THRB", # principle
+                                         "STBD1", "MYLK" # accessory
+                                         ), 
+         group.by = 'annotated')
+```
+
+## Principal and accessory markers
+
+```{r, fig.height=4, fig.width=25}
+chicken = readRDS('../../Full_Objects/Chicken_full_v1.rds')
+DotPlot2(chicken, features = c('CALB1', 'CALB2', 'DSCAM', 'SOX5'), group.by = 'annotated')
+```
+
+# IHC validation
+
+```{r, fig.height=4, fig.width=5}
+chicken_pr = readRDS("../../Species_Objects/Cone_Objects/Chicken_clean_v3.rds")
+chicken_pr = subset(chicken_pr, annotated != 'full')
+chicken_pr$annotated = factor(chicken_pr$annotated, levels = c('rod','UV', 'blue', 'green', 'red', 'principle', 'accessory'))
+DotPlot2(chicken_pr, features = c('CALB1', 'DSCAM', 'SOX5'), group.by = 'annotated')
+VlnPlot(chicken_pr, features = c('CALB1', 'CALB2', 'DSCAM', 'SOX5', 'MYLK', 'STBD1', 'ACTN2', 'EXT1', 'GABRG3'), group.by = 'annotated', stack = TRUE, fill.by = 'ident')
+```
+
+Find DE genes the distinguish the principal from everything: 
+
+* GABRG3 has antibodies
+* EXT1 has antibodies
+* LOC107055388 (MAP4K1?)
+
+```{r, fig.width=5, fig.height=30}
+de.markers = TopNDEGs(chicken_pr, group.by = 'annotated', n = 30)
+DotPlot2(chicken_pr, features = unique(de.markers$gene), group.by = 'annotated')
+```
+
+Macaque calbindin
+
+```{r, fig.height=4, fig.width=20}
+macaque_initial = readRDS('../../Species_Objects/Macaque_initial.rds')
+macaque_initial = UpdateEnrichment(macaque_initial, 'Macaque')
+DotPlot2(subset(macaque_initial, region == 'Periphery'), features = c('CALB1', 'CALB2', 'DSCAM', 'SOX5', 'MYLK', 'STBD1', 'ACTN2'), group.by = 'annotated')
+
+```
+
+
+# Figure 4
+
+```{r}
+# img <- list.files(system.file("extdata", package="ggimage"),
+#                   pattern="png", full.names=TRUE)
+# d <- data.frame(x = rnorm(10),
+#                 y = rnorm(10),
+#                 image = sample(img, size=10, replace = TRUE)
+#                 )
+# library(ggimage)
+# ggplot(d, aes(x, y)) + geom_image(aes(image=image), size=.05)
+```
+
+
+```{r, fig.height=4, fig.width=5.5}
+library(magick)
+pca_coords = read.csv("MappingTable/pca_coords.csv")
+pca_coords$species = str_split_fixed(pca_coords$celltype, "_", 2)[,1]
+pca_coords$species = factor(names(species_palette)[match(pca_coords$species, names(species_palette2))], levels = names(species_palette))
+pca_coords$type = factor(str_split_fixed(pca_coords$celltype, "_", 2)[,2], levels = names(pr_palette))
+pca_coords$image = image.files2[match(pca_coords$species, names(image.files2))]
+head(pca_coords)
+
+joint_pca = ggplot(pca_coords, aes(x = principal.component.1, y = principal.component.2, shape = species, color = type))+
+  geom_point(size = 3)+
+  # scale_shape_manual(size = 10)+
+  # geom_image(aes(image=image))+
+  scale_color_manual(values = pr_palette)+
+  scale_shape_manual(values = c(15, 16, 17))+
+  labs(x = "PC1 (11%)", y = "PC2 (8.6%)")+
+  theme_dario()+
+  theme(legend.key=element_rect(fill="white"))
+
+TitlePlot(joint_pca, "joint PCA")
+```
+
+
+```{r, fig.height=3.4, fig.width=13}
+pca_ze = PseudoBulkPCA(objectList$Zebrafish, group.by = "annotated", title = "Zebrafish", scale = FALSE, min.pct.expressed = 0, size = 3, shape = 15, cols = pr_palette, label = TRUE) + NoLegend()
+pca_ch = PseudoBulkPCA(objectList$Chicken, group.by = "annotated", title = "Chick", scale = FALSE, min.pct.expressed = 0, size = 3, shape = 16, cols = pr_palette, label = TRUE) + NoLegend()
+pca_li = PseudoBulkPCA(objectList$Lizard, group.by = "annotated", title = "Lizard", scale = FALSE, min.pct.expressed = 0, size = 3, shape = 17, cols = pr_palette, label = TRUE) + NoLegend()
+```
+
+
+```{r, fig.height=3.2, fig.width=14}
+fig4 = plot_grid(pca_ze, 
+          pca_ch, 
+          pca_li,
+          TitlePlot(joint_pca, "joint PCA"), 
+          rel_widths = c(1,1,1,1.38),
+          nrow = 1)
+
+fig4
+```
+
+
+```{r, fig.height=3.5, fig.width=15}
+pdf("figures/fig4_panelA.pdf", height=3.2, width=14)
+fig4
+dev.off()
+```
+
+```{r}
+var_exp = (res.pca$sdev^2)/sum(res.pca$sdev^2)
+ggscatter(as.data.frame(res.pcas[[1]]$x), x = "PC1", y = "PC2")
+```
+
+# Exploratory DEG analysis
+
+```{r, fig.height=7, fig.width=7}
+chicken = fullList$ChickenV3
+lizard = fullList$Lizard
+# chicken = readRDS("../../Species_Objects/Cone_Objects/Chicken_clean_v3.rds")
+```
+
+## Genes that distinguish the accessory member from the principal member
+
+```{r, fig.height=7, fig.width=7}
+top_20 = TopNDEGs(subset(chicken, annotated %in% c('principal', 'accessory')), group.by = 'annotated', n = 20)
+de_pa = FindMarkersFast(chicken, group.by = 'annotated', ident.1 = 'principal', ident.2 = 'accessory', p_val_adj_cutoff = 0.01, avg_log2FC_cutoff = 0.25)
+p1 = ExpressionScatter(chicken, 'principal', 'accessory', genes.to.label = c(top_20$gene), group.by = 'annotated', label.size = 2)
+write.xlsx(de_pa, 'de_tests/DE_chicken_principal_accessory_all.xlsx')
+```
+
+## Genes that are the same in both members of a double cone different from the red single cone
+
+```{r, fig.height=7, fig.width=14}
+# Since there's too many DEGs to plot, will only plotting top DEGs
+top_pr = TopNDEGs(subset(chicken, annotated %in% c('principal', 'red')), group.by = 'annotated', n = 50, avg_log2FC_cutoff = 0.25)
+top_ar = TopNDEGs(subset(chicken, annotated %in% c('accessory', 'red')), group.by = 'annotated', n = 50, avg_log2FC_cutoff = 0.25)
+top_pb = TopNDEGs(subset(chicken, annotated %in% c('principal', 'blue')), group.by = 'annotated', n = 50, avg_log2FC_cutoff = 0.25)
+top_ab = TopNDEGs(subset(chicken, annotated %in% c('accessory', 'blue')), group.by = 'annotated', n = 50, avg_log2FC_cutoff = 0.25)
+# top_dr = merge(top_pr[top_pr$cluster == 'principal',], top_ar[top_ar$cluster == 'accessory',], by = 'gene')
+# top_rd = merge(top_pr[top_pr$cluster == 'red',], top_ar[top_ar$cluster == 'red',], by = 'gene')
+
+p2 = plot_grid(ExpressionScatter(chicken, 'red', 'principal', genes.to.label = top_pr$gene, group.by = 'annotated', label.size = 2), 
+               ExpressionScatter(chicken, 'red', 'accessory', genes.to.label = top_ar$gene, group.by = 'annotated', label.size = 2))
+
+p5 = plot_grid(ExpressionScatter(chicken, 'blue', 'principal', genes.to.label = top_pb$gene, group.by = 'annotated', label.size = 2), 
+               ExpressionScatter(chicken, 'blue', 'accessory', genes.to.label = top_ab$gene, group.by = 'annotated', label.size = 2))
+
+p2
+p5# de_pr = FindMarkersFast(chicken, group.by = 'annotated', ident.1 = 'principal', ident.2 = 'red', p_val_adj_cutoff = 0.01, avg_log2FC_cutoff = 0.25)
+# de_ar = FindMarkersFast(chicken, group.by = 'annotated', ident.1 = 'accessory', ident.2 = 'red', p_val_adj_cutoff = 0.01, avg_log2FC_cutoff = 0.25)
+# de_dr = merge(subset(de_pr, avg_log2FC > 0), subset(de_ar, avg_log2FC > 0), by = 'gene')
+# de_rd = merge(subset(de_pr, avg_log2FC < 0), subset(de_ar, avg_log2FC < 0), by = 'gene')
+# write.xlsx(rbind(de_dr, de_rd), 'de_tests/DE_chicken_double_red_all.xlsx')
+```
+
+```{r, fig.height=7, fig.width=7}
+# lizard = readRDS("../../Species_Objects/Cone_Objects/Lizard_clean_v1.rds")
+```
+
+## Genes that distinguish the accessory member from the principal member
+
+```{r, fig.height=7, fig.width=7}
+top_20 = TopNDEGs(subset(lizard, annotated %in% c('principal', 'accessory')), group.by = 'annotated', n = 20)
+de_pa = FindMarkersFast(lizard, group.by = 'annotated', ident.1 = 'principal', ident.2 = 'accessory', p_val_adj_cutoff = 0.01, avg_log2FC_cutoff = 0.25)
+p3 = ExpressionScatter(lizard, 'principal', 'accessory', genes.to.label = c(top_20$gene), group.by = 'annotated', label.size = 2)
+write.xlsx(de_pa, 'de_tests/DE_lizard_principal_accessory_all.xlsx')
+```
+
+## Genes that are the same in both members of a double cone different from the red single cone
+
+```{r, fig.height=7, fig.width=14}
+# top_pr = TopNDEGs(subset(lizard, annotated %in% c('principal', 'red')), group.by = 'annotated', n = 100, logFC.cutoff = 0.25)
+# top_ar = TopNDEGs(subset(lizard, annotated %in% c('accessory', 'red')), group.by = 'annotated', n = 100, logFC.cutoff = 0.25)
+# top_dr = merge(top_pr[top_pr$cluster == 'principal',], top_ar[top_ar$cluster == 'accessory',], by = 'gene')
+# top_rd = merge(top_pr[top_pr$cluster == 'red',], top_ar[top_ar$cluster == 'red',], by = 'gene')
+de_pr = FindMarkersFast(lizard, group.by = 'annotated', ident.1 = 'principal', ident.2 = 'red', p_val_adj_cutoff = 0.01, avg_log2FC_cutoff = 0.25)
+de_ar = FindMarkersFast(lizard, group.by = 'annotated', ident.1 = 'accessory', ident.2 = 'red', p_val_adj_cutoff = 0.01, avg_log2FC_cutoff = 0.25)
+de_dr = merge(subset(de_pr, avg_log2FC > 0), subset(de_ar, avg_log2FC > 0), by = 'gene')
+de_rd = merge(subset(de_pr, avg_log2FC < 0), subset(de_ar, avg_log2FC < 0), by = 'gene')
+
+p4 = plot_grid(ExpressionScatter(lizard, 'red', 'principal', genes.to.label = c(de_dr$gene, de_rd$gene), group.by = 'annotated', label.size = 2), 
+               ExpressionScatter(lizard, 'red', 'accessory', genes.to.label = c(de_dr$gene, de_rd$gene), group.by = 'annotated', label.size = 2))
+p6 = plot_grid(ExpressionScatter(lizard, 'blue', 'principal', genes.to.label = c(de_dr$gene, de_rd$gene), group.by = 'annotated', label.size = 2), 
+               ExpressionScatter(lizard, 'blue', 'accessory', genes.to.label = c(de_dr$gene, de_rd$gene), group.by = 'annotated', label.size = 2))
+write.xlsx(rbind(de_dr, de_rd), 'de_tests/DE_lizard_double_red_all.xlsx')
+```
+
+```{r, fig.height=12, fig.width=18}
+pdf('figures/figS5_degs.pdf', height=12, width=18)
+plot_grid(p1, p2, p3, p4, p5, p6, ncol = 2, align = 'v', axis = 'bt', rel_widths = c(1,2))
+dev.off()
+```
+
+## Comparison between chicken and lizard DEGs
+
+```{r, fig.height=5, fig.width=10}
+chicken_pr = read.xlsx('de_tests/DE_chicken_principal_accessory_all.xlsx')
+lizard_pr = read.xlsx('de_tests/DE_lizard_principal_accessory_all.xlsx')
+chicken_dc = read.xlsx('de_tests/DE_chicken_double_red_all.xlsx')
+lizard_dc = read.xlsx('de_tests/DE_lizard_double_red_all.xlsx')
+
+# li2ch = BlastOrthologyTable(file1 = "maps/zech/ch_to_ze.txt", 
+#                             file2 = "maps/zech/ze_to_ch.txt", 
+#                             keyfile1 = "Keys/Chicken_key.csv",
+#                             keyfile2 = "Keys/Zebrafish_key.csv", 
+#                             one2one = TRUE)
+
+li2ch = readRDS("orthology_graphs/li2ch.rds")
+
+chicken_pr_genes = subset(chicken_pr, avg_log2FC > 0)$gene
+lizard_pr_genes = subset(lizard_pr, avg_log2FC > 0)$gene
+lizard_pr_genes_converted = ConvertGeneSymbolsFromMatrix(li2ch, lizard_pr_genes)
+
+chicken_ac_genes = subset(chicken_pr, avg_log2FC < 0)$gene
+lizard_ac_genes = subset(lizard_pr, avg_log2FC < 0)$gene
+lizard_ac_genes_converted = ConvertGeneSymbolsFromMatrix(li2ch, lizard_ac_genes)
+
+chicken_dc_genes = subset(chicken_dc, avg_log2FC.x > 0)$gene
+lizard_dc_genes = subset(lizard_dc, avg_log2FC.x > 0)$gene
+lizard_dc_genes_converted = ConvertGeneSymbolsFromMatrix(li2ch, lizard_dc_genes)
+
+chicken_rd_genes = subset(chicken_dc, avg_log2FC.x < 0)$gene
+lizard_rd_genes = subset(lizard_dc, avg_log2FC.x < 0)$gene
+lizard_rd_genes_converted = ConvertGeneSymbolsFromMatrix(li2ch, lizard_rd_genes)
+```
+
+
+```{r, fig.height=2.5, fig.width=5}
+# par(mfrow = c(2,2))
+pdf('de_tests/venn_pr.pdf', height = 2.5, width = 5)
+overlap_pr = VennDiagram(chicken_pr_genes, lizard_pr_genes_converted, name1 = 'chick\nprincipal', name2 = 'lizard\nprincipal')
+dev.off()
+
+pdf('de_tests/venn_ac.pdf', height = 2.5, width = 5)
+overlap_ac = VennDiagram(chicken_ac_genes, lizard_ac_genes_converted, name1 = 'chick\naccessory', name2 = 'lizard\naccessory')
+dev.off()
+
+pdf('de_tests/venn_dc.pdf', height = 2.5, width = 5)
+overlap_dc = VennDiagram(chicken_dc_genes, lizard_dc_genes_converted, name1 = 'chick\nDC', name2 = 'lizard\nDC')
+dev.off()
+
+pdf('de_tests/venn_rd.pdf', height = 2.5, width = 5)
+overlap_rd = VennDiagram(chicken_rd_genes, lizard_rd_genes_converted, name1 = 'chick\nred', name2 = 'lizard\nred')
+dev.off()
+
+pad_na <- function(x, length.out, fill = '') {
+  c(x, rep(fill, length.out - length(x)))
+}
+
+toExcel = function(list, filename){
+  max_length <- max(sapply(list, length))
+  new_list = lapply(list, pad_na, max_length)
+  df = data.frame(new_list[[1]], new_list[[2]], new_list[[3]], new_list[[4]], check.rows = FALSE) %>% 
+    setNames(names(list))
+  write.xlsx(df, paste0('de_tests/', filename))
+  df
+}
+
+toExcel(overlap_pr, 'overlap_principal.xlsx')
+toExcel(overlap_ac, 'overlap_accessory.xlsx')
+toExcel(overlap_dc, 'overlap_dc.xlsx')
+toExcel(overlap_rd, 'overlap_red.xlsx')
+```
+
+Combine DE data into Table S2
+
+```{r}
+chicken_pr = read.xlsx('de_tests/DE_chicken_principal_accessory_all.xlsx')
+lizard_pr = read.xlsx('de_tests/DE_lizard_principal_accessory_all.xlsx')
+chicken_dc = read.xlsx('de_tests/DE_chicken_double_red_all.xlsx')
+lizard_dc = read.xlsx('de_tests/DE_lizard_double_red_all.xlsx')
+overlap_pr = read.xlsx('de_tests/overlap_principal.xlsx')
+overlap_ac = read.xlsx('de_tests/overlap_accessory.xlsx')
+overlap_dc = read.xlsx('de_tests/overlap_dc.xlsx')
+overlap_rd = read.xlsx('de_tests/overlap_red.xlsx')
+
+xlsx::write.xlsx(chicken_pr, file="Tables/TableS2_differential_gene_expression_analysis.xlsx", 
+                 sheetName="chick principal vs accessory", row.names=FALSE)
+xlsx::write.xlsx(lizard_pr, file="Tables/TableS2_differential_gene_expression_analysis.xlsx", 
+                 sheetName="lizard principal vs accessory", row.names=FALSE, append = TRUE)
+xlsx::write.xlsx(chicken_dc, file="Tables/TableS2_differential_gene_expression_analysis.xlsx", 
+                 sheetName="chick double vs red", row.names=FALSE, append = TRUE)
+xlsx::write.xlsx(lizard_dc, file="Tables/TableS2_differential_gene_expression_analysis.xlsx", 
+                 sheetName="lizard double vs red", row.names=FALSE, append = TRUE)
+xlsx::write.xlsx(overlap_pr, file="Tables/TableS2_differential_gene_expression_analysis.xlsx", 
+                 sheetName="overlap chick principal and lizard principal", row.names=FALSE, append = TRUE)
+xlsx::write.xlsx(overlap_ac, file="Tables/TableS2_differential_gene_expression_analysis.xlsx", 
+                 sheetName="overlap chick accessory and lizard accessory", row.names=FALSE, append = TRUE)
+xlsx::write.xlsx(overlap_dc, file="Tables/TableS2_differential_gene_expression_analysis.xlsx", 
+                 sheetName="overlap chick double and lizard double", row.names=FALSE, append = TRUE)
+xlsx::write.xlsx(overlap_rd, file="Tables/TableS2_differential_gene_expression_analysis.xlsx", 
+                 sheetName="overlap chick red and lizard red", row.names=FALSE, append = TRUE)
+```
+
+## Enrichment of overlap
+
+```{r}
+library(clusterProfiler)
+library(org.Gg.eg.db)
+library(org.Hs.eg.db)
+
+GO_analysis = function(list){
+  enrichGO(list,
+           OrgDb = org.Hs.eg.db, # Use human bc chicken is poorly annotated in terms of GO processes
+           keyType = "SYMBOL",  # Type of gene identifier
+           ont = "BP",  # Ontology: BP (Biological Process), MF (Molecular Function), CC (Cellular Component)
+           pAdjustMethod = "BH",  # p-value adjustment method
+           pvalueCutoff = 1,  # p-value cutoff
+           qvalueCutoff = 1,  # q-value cutoff
+           readable = TRUE)  # Convert Entrez IDs to gene symbols
+}
+
+# Overlaps
+go_pr = GO_analysis(overlap_pr$`chicken_pr_genes&lizard_pr_genes_converted`)
+go_ac = GO_analysis(overlap_ac$`chicken_ac_genes&lizard_ac_genes_converted`)
+
+# Just chicken genes
+go_pr_ch = GO_analysis(overlap_pr$`chicken_pr_genes`)
+go_ac_ch = GO_analysis(overlap_ac$`chicken_ac_genes`)
+
+dotplot(go_pr_ch, showCategory = 10)
+dotplot(go_ac_ch, showCategory = 10)
+```
+
+## Magnetoreception genes
+
+```{r, fig.height=7, fig.width=7}
+mg_genes = toupper(read.xlsx('Photoreceptor_genes_avian_photoreceptors.xlsx')$Gene.Symbol)
+de_pa = FindMarkersFast(chicken, group.by = 'annotated', ident.1 = 'principal', ident.2 = 'accessory', p_val_adj_cutoff = 0.01)
+ExpressionScatter(chicken, 'principal', 'accessory', genes.to.label = mg_genes[mg_genes %in% de_pa$gene], group.by = 'annotated')
+write.xlsx(de_pa, 'de_tests/DE_principal_accessory_all.xlsx')
+
+DotPlot2(chicken, group.by = 'annotated', features = c("CRY1A","CRY1B","CRY2","CRY4", "CRY1"))
+DotPlot2(chicken, group.by = 'annotated', features = c('SOX5', 'DSCAM'))
+```
+
+```{r, fig.height=7, fig.width=14}
+chicken_subset = subset(chicken, annotated %in% c('principal', 'accessory', 'red'))
+chicken_subset$annotated2 = ifelse(chicken_subset$annotated == 'red', 'red', 'double')
+de_dr = FindMarkersFast(chicken_subset, group.by = 'annotated2', ident.1 = 'double', ident.2 = 'red', p_val_adj_cutoff = 0.01)
+plot_grid(ExpressionScatter(chicken_subset, 'red', 'principal', genes.to.label = mg_genes[mg_genes %in% de_dr$gene], group.by = 'annotated'), 
+          ExpressionScatter(chicken_subset, 'red', 'accessory', genes.to.label = mg_genes[mg_genes %in% de_dr$gene], group.by = 'annotated'))
+write.xlsx(de_dr, 'de_tests/DE_double_red_all.xlsx')
+```
+
+## Homophilic adhesion in chicken cones
+
+```{r, fig.height=100, fig.width=10}
+chicken = objectList$ChickenV3
+gene2go = fread('../../reference_files/human_gene2go_symbol.csv')
+cell_adhesion_terms = gene2go[grepl("cell adhesion", gene2go$GoTerm)]$GoTerm %>% unique %>% sort
+cell_adhesion_terms
+cell_adhesion_genes = gene2go[grepl("cell adhesion", gene2go$GoTerm)]$Symbol %>% unique %>% sort
+cell_adhesion_genes
+
+chicken = ScaleData(chicken, features = rownames(chicken))
+
+# SeuratHeatmap(chicken, 
+#               cell_adhesion_genes, 
+#               group.by = 'annotated', 
+#               # annotate.by = 'annotated', 
+#               cluster_rows = FALSE, 
+#               cluster_columns = FALSE,
+#               show_row_names = FALSE, 
+#               show_column_names = FALSE, 
+#               use_raster = FALSE)
+
+# Lizard genes
+li2ch = readRDS("orthology_graphs/li2ch.rds")
+cell_adhesion_genes_converted = ConvertGeneSymbolsFromMatrix(Matrix::t(li2ch), cell_adhesion_genes) %>% 
+  as.data.frame() %>% 
+  rownames_to_column() %>% 
+  setNames(c('Chicken', 'Lizard')) %>% 
+  mutate(row_annotation = 'red')
+
+# Filter out lowly expressed genes
+objectList$Chicken$annotated = factor(objectList$Chicken$annotated)
+chicken.high.features = SelectFeatures(objectList$Chicken, group.by = 'annotated', nfeatures = 100000, min.pct.expressed = 5)
+objectList$Lizard$annotated = factor(objectList$Lizard$annotated)
+lizard.high.features = SelectFeatures(objectList$Lizard, group.by = 'annotated', nfeatures = 100000, min.pct.expressed = 5)
+cell_adhesion_genes_converted_filt = subset(cell_adhesion_genes_converted, Chicken %in% chicken.high.features & Lizard %in% lizard.high.features)
+
+pdf('figures/cell-adhesion-molecules-filt.pdf', height = 40, width = 7)
+SAMapHeatmap(objectList, 
+             cell_adhesion_genes_converted_filt, 
+             show_column_names = FALSE,
+             species.use = c("Chicken", "Lizard"), 
+             types.use = c("accessory", "principal", "red", "green", "blue", "UV", "rod"), 
+             show_heatmap_legend = FALSE, 
+             cluster_rows = TRUE,
+             cluster_columns = FALSE,
+             remove.nas = TRUE,
+             width = unit(4, "in"))
+dev.off()
+```
+
+## Gap junctions
+
+```{r, fig.height=3, fig.width=7}
+connexins = sort(rownames(objectList$Chicken)[grepl('^GJA|^GJB|^GJC|^GJD|^GJE', rownames(objectList$Chicken))])
+connexin_genes_converted = ConvertGeneSymbolsFromMatrix(Matrix::t(li2ch), connexins) %>% 
+  as.data.frame() %>% 
+  rownames_to_column() %>% 
+  setNames(c('Chicken', 'Lizard')) %>% 
+  mutate(row_annotation = 'red') 
+  # filter(Chicken %in% chicken.high.features & Lizard %in% lizard.high.features)
+
+SAMapHeatmap(objectList, 
+             connexin_genes_converted,
+             show_column_names = FALSE,
+             species.use = c("Chicken", "Lizard"), 
+             types.use = c("accessory", "principal", "red", "green", "blue", "UV", "rod"), 
+             show_heatmap_legend = FALSE, 
+             cluster_rows = TRUE,
+             cluster_columns = FALSE,
+             remove.nas = TRUE,
+             width = unit(4, "in"))
+```
+
+
+```{r}
+DotPlot2(objectList$Chicken, features = c('GJC1', 'GJD2', 'GJC2', 'GJA10', 'GJA5'), group.by = 'annotated')
+DotPlot2(objectList$Lizard, features = c('GJC1', 'GJD2', 'GJC2', 'GJA10', 'GJA5'), group.by = 'annotated')
+```
+
+## Dopamine receptors for Tom
+
+```{r, fig.height=4, fig.width=10}
+# chicken = readRDS("../../Species_Objects/Cone_Objects/Chicken_clean_v3.rds")
+ggarrange(
+  TitlePlot(DotPlot2(chicken, features = paste0('DRD', 1:5), group.by = 'annotated'), 'Chicken'), 
+  TitlePlot(DotPlot2(lizard, features = paste0('DRD', 1:5), group.by = 'annotated'), 'Lizard'), 
+  ncol = 2, common.legend = TRUE, legend = 'right')
+
+zebrafish_drd = rownames(objectList$ZebrafishAdult)[startsWith(rownames(objectList$ZebrafishAdult), 'drd')]
+TitlePlot(DotPlot2(objectList$Zebrafish, features = zebrafish_drd, group.by = 'annotated'), 'Zebrafish')
+DotPlot2(fullList$ZebrafishAdult, features = zebrafish_drd, group.by = 'seurat_clusters')
+DimPlotLabeled(fullList$ZebrafishAdult, 'seurat_clusters') | DimPlotLabeled(fullList$ZebrafishAdult, 'annotated')
+```
+
+```{r}
+neuromodulator.genes <- c("TAC1", "TACR1", "TPH1", "TPH2", "SLC6A4", "HTR1A", "HTR1B", 
+           "HTR1D", "HTR1E", "HTR1F", "HTR2A", "HTR2B", "HTR2C", "HTR3A", 
+           "HTR3B", "HTR3C", "HTR3D", "HTR3E", "HTR4", "HTR5A", "HTR5B", 
+           "HTR6", "HTR7", "CNR1", "CNR2", "NAPEPLD", "MGLL")
+
+ze2hs = BlastOrthologyTable(file1 = "../../../BLAST_HOMOLOGY/maps_pmNCBI_zeENS_chNCBI_liNCBI_opNCBI_sqENS_hsENS/zehs/hs_to_ze.txt",
+                            file2 = "../../../BLAST_HOMOLOGY/maps_pmNCBI_zeENS_chNCBI_liNCBI_opNCBI_sqENS_hsENS/zehs/ze_to_hs.txt",
+                            keyfile1 = "../../../BLAST_HOMOLOGY/Keys/Human_key.csv",
+                            keyfile2 = "../../../BLAST_HOMOLOGY/Keys/Zebrafish_lyu_key.csv", 
+                            one2one = TRUE)
+
+neuromodulator.genes.ze = as.vector(ConvertGeneSymbolsFromMatrix(t(ze2hs), neuromodulator.genes))
+
+TitlePlot(DotPlot2(fullList$ZebrafishCorbo, features = neuromodulator.genes.ze, group.by = 'annotated2') + NoLegend(), 'Corbo') | 
+  TitlePlot(DotPlot2(fullList$ZebrafishDev, features = neuromodulator.genes.ze, group.by = 'annotated') + NoLegend(), 'Lyu 4/5 dpf') |
+  TitlePlot(DotPlot2(fullList$ZebrafishAdult, features = neuromodulator.genes.ze, group.by = 'annotated2'), 'Lyu adult')
+```
+
