@@ -10,9 +10,7 @@
 ## Project Overview
 This repository contains analyses for **Transcriptomic insights into the evolutionary origin of tetrapod double cone**. 
 
-The paper can be accessed here: 
-
-[insert biorxiv link]
+The paper can be accessed [here](https://www.cell.com/current-biology/fulltext/S0960-9822(25)00376-8).
 
 ## Repository Structure
 - **src/AnalysisAndFigures_Part1.Rmd**: R Markdown notebook where most analysis, figures, and supplementary materials were generated.
@@ -43,5 +41,5 @@ Due to the size of the files, the data directory is empty by default. For data f
 ## Cite
 If you find our code, analysis, or results useful and use them in your publications, please cite us using the following citation: 
 
-Tommasini, Yoshimatsu, Baden, and Shekhar. Transcriptomic insights into the evolutionary origin of the tetrapod double cone. *In submission*. 2024. 
+Tommasini, Yoshimatsu, Baden, and Shekhar. Transcriptomic insights into the evolutionary origin of the tetrapod double cone. *Current Biology*. 2025. 
 
